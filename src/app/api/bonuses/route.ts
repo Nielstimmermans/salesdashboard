@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     name,
     type,
     period,
+    scope,
     target_amount,
     bonus_value,
     percentage_value,
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
       bonus_value,
       percentage_value,
       tiers,
+      scope: scope || "individual",
       apply_to_all: apply_to_all || false,
     })
     .select()

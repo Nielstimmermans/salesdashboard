@@ -51,7 +51,8 @@ export interface BonusConfig {
   id: string;
   name: string;
   type: "fixed" | "percentage" | "tiered";
-  period: "weekly" | "monthly";
+  period: "weekly" | "monthly" | "all_time";
+  scope: "individual" | "group";
   target_amount: number | null;
   bonus_value: number | null;
   percentage_value: number | null;
@@ -145,6 +146,7 @@ export interface BonusProgress {
   earnedBonus: number;
   currentTier: BonusTier | null;
   nextTier: BonusTier | null;
+  isGroup?: boolean;
 }
 
 // ============================================

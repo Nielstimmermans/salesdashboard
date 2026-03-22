@@ -39,6 +39,7 @@ export async function PUT(
     "tiers",
     "is_active",
     "apply_to_all",
+    "scope",
   ];
 
   for (const field of allowedFields) {
@@ -56,6 +57,22 @@ export async function PUT(
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Sync employee assignments if provided
+  if ("employee_ids" in body) {
+    await supabaseAdmin
+      .from("bonus_assignments")
+      .delete()
+      .eq("bonus_config_id", id);
+
+    if (!body.apply_to_all && body.employee_ids?.length > 0) {
+      const assignments = body.employee_ids.map((empId: string) => ({
+        bonus_config_id: id,
+        employee_id: empId,
+      }));
+      await supabaseAdmin.from("bonus_assignments").insert(assignments);
+    }
   }
 
   return NextResponse.json({ config });

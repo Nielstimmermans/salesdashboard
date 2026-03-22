@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { calculateBonus, getDateRange } from "@/lib/utils";
-import type { BonusConfig, BonusProgress, BonusTier } from "@/types";
+import type { BonusProgress, BonusTier } from "@/types";
 
 export async function GET() {
   const { userId } = await auth();
@@ -39,18 +39,51 @@ export async function GET() {
   const progressList: BonusProgress[] = [];
 
   for (const config of applicableConfigs) {
-    const dateRange = getDateRange(
-      config.period === "weekly" ? "week" : "month"
-    );
+    const isGroup = config.scope === "group";
 
-    // Get current sales
-    const { data: orders } = await supabaseAdmin
+    // Build orders query
+    let query = supabaseAdmin
       .from("orders")
       .select("total_paid, refund_amount")
-      .eq("tag", employee.tag)
-      .gte("order_date", dateRange.from.toISOString())
-      .lte("order_date", dateRange.to.toISOString())
       .not("financial_status", "in", '("voided","cancelled")');
+
+    // Date filter (skip for all_time)
+    if (config.period !== "all_time") {
+      const dateRange = getDateRange(
+        config.period === "weekly" ? "week" : "month"
+      );
+      query = query
+        .gte("order_date", dateRange.from.toISOString())
+        .lte("order_date", dateRange.to.toISOString());
+    }
+
+    // Tag filter: group = all assigned employees, individual = current employee only
+    if (isGroup) {
+      let tags: string[];
+      if (config.apply_to_all) {
+        const { data: allEmps } = await supabaseAdmin
+          .from("employees")
+          .select("tag")
+          .eq("is_active", true);
+        tags = (allEmps || []).map((e) => e.tag);
+      } else {
+        const assignedIds = config.bonus_assignments.map(
+          (a: { employee_id: string }) => a.employee_id
+        );
+        const { data: assignedEmps } = await supabaseAdmin
+          .from("employees")
+          .select("tag")
+          .in("id", assignedIds);
+        tags = (assignedEmps || []).map((e) => e.tag);
+      }
+      if (tags.length > 0) {
+        query = query.in("tag", tags);
+      }
+    } else {
+      query = query.eq("tag", employee.tag);
+    }
+
+    const { data: orders } = await query;
 
     const currentSales = (orders || []).reduce(
       (sum, o) => sum + Number(o.total_paid) - Number(o.refund_amount),
@@ -92,6 +125,7 @@ export async function GET() {
       earnedBonus,
       currentTier,
       nextTier,
+      isGroup,
     });
   }
 

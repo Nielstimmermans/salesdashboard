@@ -49,13 +49,22 @@ export function BonusProgressPanel() {
             className="rounded-xl border bg-white p-6 shadow-sm"
           >
             <div className="flex items-center justify-between">
-              <h4 className="font-semibold text-gray-900">
-                {item.bonusConfig.name}
-              </h4>
+              <div className="flex items-center gap-2">
+                <h4 className="font-semibold text-gray-900">
+                  {item.bonusConfig.name}
+                </h4>
+                {item.isGroup && (
+                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                    Groep
+                  </span>
+                )}
+              </div>
               <span className="text-sm text-gray-500">
                 {item.bonusConfig.period === "weekly"
                   ? "Deze week"
-                  : "Deze maand"}
+                  : item.bonusConfig.period === "monthly"
+                  ? "Deze maand"
+                  : "All-time"}
               </span>
             </div>
 
