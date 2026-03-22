@@ -4,19 +4,16 @@ import { useState } from "react";
 import { CSKpiCards } from "@/components/cs/cs-kpi-cards";
 import { CSTicketChart } from "@/components/cs/cs-ticket-chart";
 import { PeriodFilter } from "@/components/dashboard/period-filter";
-import { StoreFilter } from "@/components/dashboard/store-filter";
 import { useCSOverview } from "@/hooks/use-cs-overview";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function CSOverviewPage() {
   const [period, setPeriod] = useState<PeriodFilterType>("month");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
-  const [storeId, setStoreId] = useState<string>("all");
 
-  const { data, timeSeries, loading, error } = useCSOverview({
+  const { data, timeSeries, viewCounts, loading, error } = useCSOverview({
     period,
     dateRange,
-    storeId,
   });
 
   return (
@@ -37,7 +34,6 @@ export default function CSOverviewPage() {
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
           />
-          <StoreFilter value={storeId} onChange={setStoreId} />
         </div>
       </div>
 
@@ -49,7 +45,7 @@ export default function CSOverviewPage() {
 
       {/* KPI Cards */}
       {data ? (
-        <CSKpiCards data={data} loading={loading} />
+        <CSKpiCards data={data} viewCounts={viewCounts} loading={loading} />
       ) : loading ? (
         <CSKpiCards
           data={{

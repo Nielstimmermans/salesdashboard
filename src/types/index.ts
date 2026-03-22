@@ -12,6 +12,9 @@ export interface Store {
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
+  gorgias_domain: string | null;
+  gorgias_email: string | null;
+  gorgias_api_key: string | null;
 }
 
 export interface Employee {

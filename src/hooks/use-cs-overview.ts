@@ -1,17 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PeriodFilter, DateRange } from "@/types";
 import type { CSOverviewData, CSOverviewTimeSeries } from "@/types/gorgias";
+import type { ViewTicketCount } from "@/lib/gorgias";
 
 interface UseCSOverviewParams {
   period: PeriodFilter;
   dateRange?: DateRange;
-  storeId: string;
   includeTimeSeries?: boolean;
 }
 
 interface UseCSOverviewReturn {
   data: CSOverviewData | null;
   timeSeries: CSOverviewTimeSeries[];
+  viewCounts: ViewTicketCount[];
   loading: boolean;
   error: string | null;
   refetch: () => void;
@@ -20,11 +21,11 @@ interface UseCSOverviewReturn {
 export function useCSOverview({
   period,
   dateRange,
-  storeId,
   includeTimeSeries = true,
 }: UseCSOverviewParams): UseCSOverviewReturn {
   const [data, setData] = useState<CSOverviewData | null>(null);
   const [timeSeries, setTimeSeries] = useState<CSOverviewTimeSeries[]>([]);
+  const [viewCounts, setViewCounts] = useState<ViewTicketCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +35,6 @@ export function useCSOverview({
 
     const params = new URLSearchParams({
       period,
-      store_id: storeId,
       time_series: includeTimeSeries ? "true" : "false",
     });
 
@@ -52,16 +52,17 @@ export function useCSOverview({
       const json = await res.json();
       setData(json.overview);
       setTimeSeries(json.timeSeries || []);
+      setViewCounts(json.viewCounts || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }, [period, dateRange, storeId, includeTimeSeries]);
+  }, [period, dateRange, includeTimeSeries]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  return { data, timeSeries, loading, error, refetch: fetchData };
+  return { data, timeSeries, viewCounts, loading, error, refetch: fetchData };
 }

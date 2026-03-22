@@ -117,9 +117,9 @@ export function ChannelStackedChart({
               borderRadius: "8px",
               fontSize: "13px",
             }}
-            formatter={(value: number, name: string) => [
-              value.toLocaleString("nl-NL"),
-              CHANNEL_LABELS[name] || (name === "other" ? "Overig" : name),
+            formatter={(value, name) => [
+              Number(value).toLocaleString("nl-NL"),
+              CHANNEL_LABELS[String(name)] || (name === "other" ? "Overig" : String(name)),
             ]}
           />
           <Legend

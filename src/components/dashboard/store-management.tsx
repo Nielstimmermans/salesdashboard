@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, RefreshCw, Trash2, CheckCircle, AlertCircle, ExternalLink, Webhook } from "lucide-react";
+import { Plus, RefreshCw, Trash2, CheckCircle, AlertCircle, ExternalLink, Webhook, ChevronDown, ChevronUp, Save } from "lucide-react";
 import type { Store } from "@/types";
 
 export function StoreManagement() {
@@ -12,6 +12,13 @@ export function StoreManagement() {
   const [shopDomain, setShopDomain] = useState("");
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [expandedStore, setExpandedStore] = useState<string | null>(null);
+  const [gorgiasForm, setGorgiasForm] = useState<{
+    domain: string;
+    email: string;
+    apiKey: string;
+  }>({ domain: "", email: "", apiKey: "" });
+  const [savingGorgias, setSavingGorgias] = useState(false);
   const searchParams = useSearchParams();
 
   const success = searchParams.get("success");
@@ -90,6 +97,52 @@ export function StoreManagement() {
       setSyncResult("Webhook registratie mislukt — netwerk fout");
     } finally {
       setSyncing(null);
+    }
+  };
+
+  const toggleGorgiasPanel = (store: Store) => {
+    if (expandedStore === store.id) {
+      setExpandedStore(null);
+    } else {
+      setExpandedStore(store.id);
+      setGorgiasForm({
+        domain: store.gorgias_domain || "",
+        email: store.gorgias_email || "",
+        apiKey: "",
+      });
+    }
+  };
+
+  const handleSaveGorgias = async (storeId: string) => {
+    setSavingGorgias(true);
+    setSyncResult(null);
+    try {
+      const body: Record<string, string> = {
+        storeId,
+        gorgias_domain: gorgiasForm.domain,
+        gorgias_email: gorgiasForm.email,
+      };
+      // Only send API key if it was changed (not empty placeholder)
+      if (gorgiasForm.apiKey) {
+        body.gorgias_api_key = gorgiasForm.apiKey;
+      }
+      const res = await fetch("/api/stores", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setSyncResult("Gorgias credentials opgeslagen");
+        setExpandedStore(null);
+        await fetchStores();
+      } else {
+        const data = await res.json();
+        setSyncResult(`Fout: ${data.error}`);
+      }
+    } catch {
+      setSyncResult("Opslaan mislukt — netwerk fout");
+    } finally {
+      setSavingGorgias(false);
     }
   };
 
@@ -199,54 +252,158 @@ export function StoreManagement() {
           </div>
         ) : (
           stores.map((store) => (
-            <div
-              key={store.id}
-              className="flex items-center justify-between p-4"
-            >
-              <div>
-                <p className="font-medium text-gray-900">{store.name}</p>
-                <p className="text-sm text-gray-500">{store.shopify_domain}</p>
-                <div className="flex items-center gap-3 text-xs text-gray-400">
-                  <span>
-                    Laatste sync:{" "}
-                    {store.last_synced_at
-                      ? new Date(store.last_synced_at).toLocaleString("nl-NL")
-                      : "Nog niet gesynchroniseerd"}
-                  </span>
-                  {store.scope && (
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500">
-                      {store.scope}
+            <div key={store.id}>
+              <div className="flex items-center justify-between p-4">
+                <div>
+                  <p className="font-medium text-gray-900">{store.name}</p>
+                  <p className="text-sm text-gray-500">{store.shopify_domain}</p>
+                  <div className="flex items-center gap-3 text-xs text-gray-400">
+                    <span>
+                      Laatste sync:{" "}
+                      {store.last_synced_at
+                        ? new Date(store.last_synced_at).toLocaleString("nl-NL")
+                        : "Nog niet gesynchroniseerd"}
                     </span>
-                  )}
+                    {store.gorgias_domain && (
+                      <span className="rounded bg-purple-50 px-1.5 py-0.5 text-purple-600">
+                        Gorgias
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleGorgiasPanel(store)}
+                    className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+                    title="Gorgias koppeling beheren"
+                  >
+                    {expandedStore === store.id ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                    Gorgias
+                  </button>
+                  <button
+                    onClick={() => handleRegisterWebhooks(store.id)}
+                    disabled={syncing === store.id}
+                    className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    title="Webhooks registreren bij Shopify"
+                  >
+                    <Webhook className="h-3.5 w-3.5" />
+                    Webhooks
+                  </button>
+                  <button
+                    onClick={() => handleSync(store.id)}
+                    disabled={syncing === store.id}
+                    className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 ${syncing === store.id ? "animate-spin" : ""}`}
+                    />
+                    Sync
+                  </button>
+                  <button
+                    onClick={() => handleDelete(store.id)}
+                    className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleRegisterWebhooks(store.id)}
-                  disabled={syncing === store.id}
-                  className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                  title="Webhooks registreren bij Shopify"
-                >
-                  <Webhook className="h-3.5 w-3.5" />
-                  Webhooks
-                </button>
-                <button
-                  onClick={() => handleSync(store.id)}
-                  disabled={syncing === store.id}
-                  className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <RefreshCw
-                    className={`h-3.5 w-3.5 ${syncing === store.id ? "animate-spin" : ""}`}
-                  />
-                  Sync
-                </button>
-                <button
-                  onClick={() => handleDelete(store.id)}
-                  className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
+
+              {/* Gorgias credentials panel */}
+              {expandedStore === store.id && (
+                <div className="border-t bg-gray-50 px-4 py-4">
+                  <p className="mb-3 text-sm font-medium text-gray-700">
+                    Gorgias koppeling
+                  </p>
+                  <div className="grid max-w-lg grid-cols-1 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-500">
+                        Gorgias subdomain
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={gorgiasForm.domain}
+                          onChange={(e) =>
+                            setGorgiasForm((f) => ({
+                              ...f,
+                              domain: e.target.value,
+                            }))
+                          }
+                          placeholder="jouwwinkel"
+                          className="flex-1 rounded-lg border px-3 py-2 text-sm"
+                        />
+                        <span className="text-sm text-gray-400">
+                          .gorgias.com
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-500">
+                        API e-mail
+                      </label>
+                      <input
+                        type="email"
+                        value={gorgiasForm.email}
+                        onChange={(e) =>
+                          setGorgiasForm((f) => ({
+                            ...f,
+                            email: e.target.value,
+                          }))
+                        }
+                        placeholder="api@jouwbedrijf.nl"
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-gray-500">
+                        API key{" "}
+                        {store.gorgias_api_key ? (
+                          <span className="text-green-600">(ingesteld)</span>
+                        ) : null}
+                      </label>
+                      <input
+                        type="password"
+                        value={gorgiasForm.apiKey}
+                        onChange={(e) =>
+                          setGorgiasForm((f) => ({
+                            ...f,
+                            apiKey: e.target.value,
+                          }))
+                        }
+                        placeholder={
+                          store.gorgias_api_key
+                            ? "Laat leeg om huidige te behouden"
+                            : "Plak je API key hier"
+                        }
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleSaveGorgias(store.id)}
+                        disabled={savingGorgias}
+                        className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        {savingGorgias ? "Opslaan..." : "Opslaan"}
+                      </button>
+                      <button
+                        onClick={() => setExpandedStore(null)}
+                        className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                      >
+                        Annuleren
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-gray-400">
+                    Vind je API credentials in Gorgias via Settings &gt; REST API
+                  </p>
+                </div>
+              )}
             </div>
           ))
         )}

@@ -27,10 +27,10 @@ services:
         value: /sign-up
       - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
         scope: RUN_AND_BUILD_TIME
-        value: /dashboard
+        value: /
       - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
         scope: RUN_AND_BUILD_TIME
-        value: /dashboard
+        value: /
       - key: NEXT_PUBLIC_SUPABASE_URL
         scope: RUN_AND_BUILD_TIME
         type: SECRET
@@ -40,7 +40,22 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         scope: RUN_TIME
         type: SECRET
-      - key: SHOPIFY_WEBHOOK_SECRET
+      - key: SHOPIFY_CLIENT_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: SHOPIFY_CLIENT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: SHOPIFY_SCOPES
+        scope: RUN_TIME
+        value: read_orders
+      - key: GORGIAS_DOMAIN
+        scope: RUN_TIME
+        type: SECRET
+      - key: GORGIAS_EMAIL
+        scope: RUN_TIME
+        type: SECRET
+      - key: GORGIAS_API_KEY
         scope: RUN_TIME
         type: SECRET
       - key: NEXT_PUBLIC_APP_URL

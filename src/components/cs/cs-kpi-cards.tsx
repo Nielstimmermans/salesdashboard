@@ -5,20 +5,21 @@ import {
   Clock,
   CheckCircle,
   Zap,
-  ThumbsUp,
-  ShieldCheck,
   TrendingUp,
   TrendingDown,
-  Bot,
+  Inbox,
 } from "lucide-react";
 import type { CSOverviewData } from "@/types/gorgias";
+import type { ViewTicketCount } from "@/lib/gorgias";
 
 interface CSKpiCardsProps {
   data: CSOverviewData;
+  viewCounts?: ViewTicketCount[];
   loading?: boolean;
 }
 
 function formatDuration(seconds: number): string {
+  if (seconds === 0) return "—";
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   const hours = Math.floor(seconds / 3600);
@@ -107,11 +108,32 @@ function SkeletonCard() {
   );
 }
 
-export function CSKpiCards({ data, loading }: CSKpiCardsProps) {
+const VIEW_ORDER = [
+  "new- one touch",
+  "sales",
+  "proefrit aan huis",
+  "slechte reviews",
+  "retour, annuleringen",
+  "garnatie & b2b",
+  "wouter check",
+  "chargeback",
+  "omclosen",
+];
+
+function sortAndFilterViews(views: ViewTicketCount[]): ViewTicketCount[] {
+  return VIEW_ORDER
+    .map((ordered) => {
+      const target = ordered.toLowerCase();
+      return views.find((v) => v.name.toLowerCase().includes(target) || target.includes(v.name.toLowerCase()));
+    })
+    .filter((v): v is ViewTicketCount => v !== undefined);
+}
+
+export function CSKpiCards({ data, viewCounts, loading }: CSKpiCardsProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, i) => (
+        {Array.from({ length: 5 }).map((_, i) => (
           <SkeletonCard key={i} />
         ))}
       </div>
@@ -150,21 +172,19 @@ export function CSKpiCards({ data, loading }: CSKpiCardsProps) {
     {
       title: "Eerste responstijd",
       value: formatDuration(data.avgFirstResponseTime),
-      subtitle: `Menselijk: ${formatDuration(data.avgHumanFirstResponseTime)}`,
       icon: <Clock className="h-5 w-5 text-orange-600" />,
       iconBg: "bg-orange-50",
       change: prev ? (
         <ChangeIndicator
           current={data.avgFirstResponseTime}
           previous={prev.avgFirstResponseTime}
-          inverted // lower is better
+          inverted
         />
       ) : undefined,
     },
     {
       title: "Oplostijd",
       value: formatDuration(data.avgResolutionTime),
-      subtitle: `Verwerkingstijd: ${formatDuration(data.avgHandleTime)}`,
       icon: <Zap className="h-5 w-5 text-yellow-600" />,
       iconBg: "bg-yellow-50",
       change: prev ? (
@@ -176,49 +196,52 @@ export function CSKpiCards({ data, loading }: CSKpiCardsProps) {
       ) : undefined,
     },
     {
-      title: "CSAT Score",
-      value:
-        data.csatScore !== null
-          ? `${(data.csatScore).toFixed(1)} / 5`
-          : "—",
-      subtitle: `${data.csatTotal} responses (${formatPercent(data.csatResponseRate)} rate)`,
-      icon: <ThumbsUp className="h-5 w-5 text-blue-600" />,
-      iconBg: "bg-blue-50",
-      change:
-        prev && data.csatScore !== null ? (
-          <ChangeIndicator
-            current={data.csatScore}
-            previous={prev.csatScore}
-          />
-        ) : undefined,
-    },
-    {
-      title: "SLA Compliance",
-      value: formatPercent(data.slaComplianceRate),
-      icon: <ShieldCheck className="h-5 w-5 text-emerald-600" />,
-      iconBg: "bg-emerald-50",
-    },
-    {
       title: "One-touch rate",
       value: formatPercent(data.oneTouchRate),
       subtitle: "Opgelost in 1 antwoord",
       icon: <CheckCircle className="h-5 w-5 text-teal-600" />,
       iconBg: "bg-teal-50",
     },
-    {
-      title: "Automatisering",
-      value: formatPercent(data.automationRate),
-      subtitle: `Zero-touch: ${formatPercent(data.zeroTouchRate)}`,
-      icon: <Bot className="h-5 w-5 text-purple-600" />,
-      iconBg: "bg-purple-50",
-    },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      {cards.map((card) => (
-        <KpiCard key={card.title} {...card} />
-      ))}
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {cards.map((card) => (
+          <KpiCard key={card.title} {...card} />
+        ))}
+      </div>
+
+      {/* View ticket counts */}
+      {viewCounts && (() => {
+        const filtered = sortAndFilterViews(viewCounts);
+        return filtered.length > 0 && (
+        <div className="rounded-xl border bg-white shadow-sm">
+          <div className="border-b px-5 py-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Openstaande tickets per view
+            </h3>
+          </div>
+          <div className="grid grid-cols-2 gap-px bg-gray-100 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {filtered.map((view) => (
+              <div
+                key={view.id}
+                className="flex items-center gap-3 bg-white px-4 py-3"
+              >
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50">
+                  <Inbox className="h-4 w-4 text-indigo-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs text-gray-500">{view.name}</p>
+                  <p className="text-lg font-bold text-gray-900">{view.count}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRole } from "@/hooks/use-role";
 
 interface NavItem {
   name: string;
@@ -29,7 +30,7 @@ const navigation: NavSection[] = [
   {
     label: "Sales",
     items: [
-      { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Orders", href: "/orders", icon: ShoppingCart },
       { name: "Leaderboard", href: "/leaderboard", icon: Trophy },
       { name: "Bonussen", href: "/bonuses", icon: Gift },
@@ -52,8 +53,7 @@ const navigation: NavSection[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  // TODO: Get user role from Clerk metadata or Supabase
-  const isAdmin = true;
+  const { isAdmin } = useRole();
 
   return (
     <aside className="hidden w-64 border-r bg-white lg:block">

@@ -5,19 +5,16 @@ import { ChannelDonutChart } from "@/components/cs/channel-donut-chart";
 import { ChannelBreakdownTable } from "@/components/cs/channel-breakdown-table";
 import { ChannelStackedChart } from "@/components/cs/channel-stacked-chart";
 import { PeriodFilter } from "@/components/dashboard/period-filter";
-import { StoreFilter } from "@/components/dashboard/store-filter";
 import { useChannelDistribution } from "@/hooks/use-channel-distribution";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function ChannelsPage() {
   const [period, setPeriod] = useState<PeriodFilterType>("month");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
-  const [storeId, setStoreId] = useState<string>("all");
 
   const { data, loading, error } = useChannelDistribution({
     period,
     dateRange,
-    storeId,
   });
 
   return (
@@ -38,7 +35,6 @@ export default function ChannelsPage() {
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
           />
-          <StoreFilter value={storeId} onChange={setStoreId} />
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import {
   fetchChannelDistribution,
   fetchChannelTimeSeries,
@@ -9,14 +9,13 @@ import type { PeriodFilter } from "@/types";
 import type { GorgiasGranularity } from "@/types/gorgias";
 
 export async function GET(request: NextRequest) {
-  const { userId } = auth();
+  const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
   const period = (searchParams.get("period") || "month") as PeriodFilter;
-  const storeId = searchParams.get("store_id") || "all";
   const fromParam = searchParams.get("from");
   const toParam = searchParams.get("to");
   const includeTimeSeries = searchParams.get("time_series") === "true";
@@ -39,12 +38,10 @@ export async function GET(request: NextRequest) {
   const granularity = granularityMap[period] || "day";
 
   try {
-    const storeFilter = storeId !== "all" ? storeId : undefined;
-
     const [distribution, timeSeries] = await Promise.all([
-      fetchChannelDistribution(from, to, storeFilter),
+      fetchChannelDistribution(from, to),
       includeTimeSeries
-        ? fetchChannelTimeSeries(from, to, granularity, storeFilter)
+        ? fetchChannelTimeSeries(from, to, granularity)
         : Promise.resolve([]),
     ]);
 

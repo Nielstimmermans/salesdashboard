@@ -1,225 +1,418 @@
 import type {
-  GorgiasStatsQuery,
-  GorgiasStatsResponse,
-  GorgiasStatsFilter,
-  GorgiasStat,
-  GorgiasDimension,
   GorgiasGranularity,
   CSOverviewData,
   CSOverviewTimeSeries,
   ChannelDistributionData,
   ChannelStats,
   ChannelTimeSeries,
-  CHANNEL_LABELS,
-  CHANNEL_COLORS,
 } from "@/types/gorgias";
-import { supabaseAdmin } from "@/lib/supabase";
+import { CHANNEL_LABELS, CHANNEL_COLORS } from "@/types/gorgias";
 
 // ============================================
-// Gorgias API Client
+// Gorgias REST API Client — Tickets-based
 // ============================================
 
-interface GorgiasStore {
-  id: string;
-  gorgias_domain: string;
-  gorgias_email: string;
-  gorgias_api_key: string;
+// --- In-memory cache (5 min TTL) + promise deduplication ---
+const CACHE_TTL = 5 * 60 * 1000;
+const cache = new Map<string, { data: unknown; expires: number }>();
+const inflight = new Map<string, Promise<unknown>>();
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry || Date.now() > entry.expires) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
 }
 
-/**
- * Base function to call the Gorgias REST API.
- * Uses Basic Auth: base64(email:apiKey)
- */
-async function gorgiasRequest<T>(
-  store: GorgiasStore,
-  method: "GET" | "POST" | "PUT" | "DELETE",
-  path: string,
-  body?: unknown
-): Promise<T> {
-  const baseUrl = `https://${store.gorgias_domain}.gorgias.com`;
-  const auth = Buffer.from(
-    `${store.gorgias_email}:${store.gorgias_api_key}`
-  ).toString("base64");
+function setCache(key: string, data: unknown): void {
+  cache.set(key, { data, expires: Date.now() + CACHE_TTL });
+}
 
-  const res = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
+/** Deduplicate concurrent calls: if a fetch for the same key is already running, reuse it. */
+async function dedupedFetch<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const cached = getCached<T>(key);
+  if (cached) return cached;
+
+  const existing = inflight.get(key);
+  if (existing) return existing as Promise<T>;
+
+  const promise = fn().then((result) => {
+    setCache(key, result);
+    inflight.delete(key);
+    return result;
+  }).catch((err) => {
+    inflight.delete(key);
+    throw err;
   });
 
-  if (!res.ok) {
-    const errorBody = await res.text();
+  inflight.set(key, promise);
+  return promise;
+}
+
+/** Fetch with retry + exponential backoff for 429 rate limits */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = 3
+): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status === 429 && attempt < retries) {
+      const wait = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    return res;
+  }
+  throw new Error("Unreachable");
+}
+
+interface GorgiasTicket {
+  id: number;
+  status: string;
+  channel: string;
+  created_datetime: string;
+  closed_datetime: string | null;
+  messages_count: number;
+  from_agent: boolean;
+}
+
+interface GorgiasMessage {
+  id: number;
+  from_agent: boolean;
+  created_datetime: string;
+}
+
+interface GorgiasView {
+  id: number;
+  name: string;
+  slug: string;
+  type: string;
+}
+
+export interface ViewTicketCount {
+  id: number;
+  name: string;
+  slug: string;
+  count: number;
+}
+
+interface GorgiasListResponse<T> {
+  data: T[];
+  meta: {
+    next_cursor?: string | null;
+    next_items?: string | null;
+  };
+}
+
+function getGorgiasAuth(): { baseUrl: string; headers: Record<string, string> } {
+  const domain = process.env.GORGIAS_DOMAIN;
+  const email = process.env.GORGIAS_EMAIL;
+  const apiKey = process.env.GORGIAS_API_KEY;
+
+  if (!domain || !email || !apiKey) {
     throw new Error(
-      `Gorgias API error ${res.status} for ${store.gorgias_domain}: ${errorBody}`
+      "Gorgias niet geconfigureerd. Stel GORGIAS_DOMAIN, GORGIAS_EMAIL en GORGIAS_API_KEY in."
     );
   }
 
-  return res.json() as Promise<T>;
-}
-
-// ============================================
-// Statistics API helpers
-// ============================================
-
-/**
- * Build the date filters used in almost every stats query.
- */
-function buildDateFilters(from: string, to: string): GorgiasStatsFilter[] {
-  return [
-    { member: "periodStart", operator: "afterDate", values: [from] },
-    { member: "periodEnd", operator: "beforeDate", values: [to] },
-  ];
+  const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
+  return {
+    baseUrl: `https://${domain}.gorgias.com`,
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+    },
+  };
 }
 
 /**
- * Fetch a single statistic from the Gorgias Stats API.
+ * Fetch all tickets within a date range using cursor pagination.
  */
-async function fetchStat<T = Record<string, unknown>>(
-  store: GorgiasStore,
-  query: GorgiasStatsQuery
-): Promise<GorgiasStatsResponse<T>> {
-  return gorgiasRequest<GorgiasStatsResponse<T>>(
-    store,
-    "POST",
-    `/api/stats/${query.scope}`,
-    {
-      scope: query.scope,
-      filters: query.filters,
-      dimensions: query.dimensions || [],
-      measures: query.measures || [],
-      time_dimensions: query.time_dimensions || [],
-      timezone: query.timezone || "Europe/Amsterdam",
+async function fetchAllTickets(from: string, to: string): Promise<GorgiasTicket[]> {
+  return dedupedFetch(`tickets:${from}:${to}`, async () => {
+    const { baseUrl, headers } = getGorgiasAuth();
+    const all: GorgiasTicket[] = [];
+    let cursor: string | null = null;
+
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+
+    while (true) {
+      const url = new URL(`${baseUrl}/api/tickets`);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("order_by", "created_datetime:desc");
+      if (cursor) url.searchParams.set("cursor", cursor);
+
+      const res = await fetchWithRetry(url.toString(), { headers });
+      if (!res.ok) {
+        throw new Error(`Gorgias API error ${res.status}: ${await res.text()}`);
+      }
+
+      const data: GorgiasListResponse<GorgiasTicket> = await res.json();
+
+      for (const ticket of data.data) {
+        const created = new Date(ticket.created_datetime);
+        if (created < fromDate) return all;
+        if (created <= toDate) all.push(ticket);
+      }
+
+      if (!data.meta.next_cursor || data.data.length === 0) break;
+      cursor = data.meta.next_cursor;
+      await new Promise((r) => setTimeout(r, 500));
     }
-  );
+
+    return all;
+  });
 }
 
 /**
- * Fetch a stat that returns a single aggregate number.
- * Returns the first row's first measure value, or 0.
+ * Fetch tickets that were CLOSED within a date range (regardless of when they were created).
+ * Uses updated_datetime ordering to find recently closed tickets, filters client-side.
  */
-async function fetchSingleStat(
-  store: GorgiasStore,
-  scope: GorgiasStat,
-  measures: string[],
-  from: string,
-  to: string
-): Promise<Record<string, number>> {
-  const response = await fetchStat(store, {
-    scope,
-    filters: buildDateFilters(from, to),
-    measures,
-  });
+async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<GorgiasTicket[]> {
+  return dedupedFetch(`closed:${from}:${to}`, async () => {
+    const { baseUrl, headers } = getGorgiasAuth();
+    const all: GorgiasTicket[] = [];
+    let cursor: string | null = null;
 
-  if (response.data.length === 0) {
-    return Object.fromEntries(measures.map((m) => [m, 0]));
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+
+    while (true) {
+      const url = new URL(`${baseUrl}/api/tickets`);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("order_by", "updated_datetime:desc");
+      if (cursor) url.searchParams.set("cursor", cursor);
+
+      const res = await fetchWithRetry(url.toString(), { headers });
+      if (!res.ok) {
+        throw new Error(`Gorgias API error ${res.status}: ${await res.text()}`);
+      }
+
+      const data: GorgiasListResponse<GorgiasTicket> = await res.json();
+      let foundOlder = false;
+
+      for (const ticket of data.data) {
+        // Skip non-closed tickets
+        if (ticket.status !== "closed" || !ticket.closed_datetime) continue;
+        const closed = new Date(ticket.closed_datetime);
+        if (closed < fromDate) {
+          foundOlder = true;
+          break;
+        }
+        if (closed <= toDate) all.push(ticket);
+      }
+
+      if (foundOlder || !data.meta.next_cursor || data.data.length === 0) break;
+      cursor = data.meta.next_cursor;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    return all;
+  });
+}
+
+/**
+ * Count total open tickets across all time.
+ * Paginates through all tickets ordered by updated_datetime, counting those with status=open.
+ */
+async function fetchTotalOpenCount(): Promise<number> {
+  return dedupedFetch("openCount", async () => {
+    const { baseUrl, headers } = getGorgiasAuth();
+    let count = 0;
+    let cursor: string | null = null;
+
+    while (true) {
+      const url = new URL(`${baseUrl}/api/tickets`);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("order_by", "updated_datetime:desc");
+      if (cursor) url.searchParams.set("cursor", cursor);
+
+      const res = await fetchWithRetry(url.toString(), { headers });
+      if (!res.ok) break;
+
+      const data: GorgiasListResponse<GorgiasTicket> = await res.json();
+      for (const ticket of data.data) {
+        if (ticket.status === "open") count++;
+      }
+
+      if (!data.meta.next_cursor || data.data.length === 0) break;
+      cursor = data.meta.next_cursor;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    return count;
+  });
+}
+
+/**
+ * Fetch first response time for a sample of tickets.
+ * Limited to 15 tickets in batches of 3 to stay within rate limits.
+ */
+async function fetchFirstResponseTimes(
+  closedTickets: GorgiasTicket[],
+  maxTickets = 15
+): Promise<number[]> {
+  const { baseUrl, headers } = getGorgiasAuth();
+  const sample = closedTickets.slice(0, maxTickets);
+  const times: number[] = [];
+
+  for (let i = 0; i < sample.length; i += 3) {
+    const batch = sample.slice(i, i + 3);
+    const results = await Promise.all(
+      batch.map(async (ticket) => {
+        try {
+          const url = new URL(`${baseUrl}/api/tickets/${ticket.id}/messages`);
+          url.searchParams.set("limit", "5");
+          url.searchParams.set("order_by", "created_datetime:asc");
+
+          const res = await fetchWithRetry(url.toString(), { headers });
+          if (!res.ok) return null;
+
+          const data: GorgiasListResponse<GorgiasMessage> = await res.json();
+          const firstAgent = data.data.find((m) => m.from_agent);
+          if (!firstAgent) return null;
+
+          const diff =
+            (new Date(firstAgent.created_datetime).getTime() -
+              new Date(ticket.created_datetime).getTime()) /
+            1000;
+          return diff > 0 ? diff : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    for (const r of results) {
+      if (r !== null) times.push(r);
+    }
+
+    if (i + 3 < sample.length) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
 
-  const row = response.data[0] as Record<string, unknown>;
-  return Object.fromEntries(
-    measures.map((m) => [m, typeof row[m] === "number" ? row[m] : 0])
-  );
+  return times;
 }
 
-/**
- * Fetch a stat broken down by time (for charts).
- */
-async function fetchTimeSeries<T = Record<string, unknown>>(
-  store: GorgiasStore,
-  scope: GorgiasStat,
-  measures: string[],
-  from: string,
-  to: string,
-  granularity: GorgiasGranularity = "day",
-  dimensions?: GorgiasDimension[]
-): Promise<T[]> {
-  const response = await fetchStat<T>(store, {
-    scope,
-    filters: buildDateFilters(from, to),
-    measures,
-    dimensions,
-    time_dimensions: [
-      { dimension: "createdDatetime", granularity },
-    ],
+// ============================================
+// Views — Open ticket counts per view
+// ============================================
+
+export async function fetchViewCounts(): Promise<ViewTicketCount[]> {
+  return dedupedFetch("viewCounts", async () => {
+    const { baseUrl, headers } = getGorgiasAuth();
+
+    // 1. Get all views
+    const viewsRes = await fetchWithRetry(`${baseUrl}/api/views?limit=100`, { headers });
+    if (!viewsRes.ok) {
+      throw new Error(`Gorgias views error: ${viewsRes.status}`);
+    }
+    const viewsData: GorgiasListResponse<GorgiasView> = await viewsRes.json();
+    const views = viewsData.data.filter((v) => v.type === "ticket-list");
+
+    // 2. Count items per view sequentially (1 at a time to respect rate limits)
+    const counts: ViewTicketCount[] = [];
+
+    for (const view of views) {
+      let count = 0;
+      let nextPage: string | null = null;
+      let isFirst = true;
+
+      while (true) {
+        const url = new URL(`${baseUrl}/api/views/${view.id}/items`);
+        url.searchParams.set("limit", "100");
+        if (nextPage) url.searchParams.set("cursor", nextPage);
+
+        const res = await fetchWithRetry(url.toString(), { headers });
+        if (!res.ok) break;
+
+        const data = await res.json();
+        const items = data.data || [];
+        count += items.length;
+
+        // Stop if no more pages
+        const cursor = data.meta?.next_items || data.meta?.next_cursor;
+        if (!cursor || items.length < 100) break;
+        nextPage = cursor;
+
+        if (!isFirst) await new Promise((r) => setTimeout(r, 500));
+        isFirst = false;
+      }
+
+      counts.push({ id: view.id, name: view.name, slug: view.slug, count });
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    return counts;
   });
-
-  return response.data;
-}
-
-/**
- * Fetch a stat broken down by a single dimension.
- */
-async function fetchByDimension<T = Record<string, unknown>>(
-  store: GorgiasStore,
-  scope: GorgiasStat,
-  measures: string[],
-  dimension: GorgiasDimension,
-  from: string,
-  to: string
-): Promise<T[]> {
-  const response = await fetchStat<T>(store, {
-    scope,
-    filters: buildDateFilters(from, to),
-    measures,
-    dimensions: [dimension],
-  });
-
-  return response.data;
 }
 
 // ============================================
-// Get all active Gorgias stores from Supabase
-// ============================================
-
-async function getGorgiasStores(
-  storeId?: string
-): Promise<GorgiasStore[]> {
-  let query = supabaseAdmin
-    .from("stores")
-    .select("id, gorgias_domain, gorgias_email, gorgias_api_key")
-    .eq("is_active", true)
-    .not("gorgias_domain", "is", null);
-
-  if (storeId && storeId !== "all") {
-    query = query.eq("id", storeId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw new Error(`Failed to fetch stores: ${error.message}`);
-  return (data || []) as GorgiasStore[];
-}
-
-// ============================================
-// CS Overview — Aggregate all KPIs
+// CS Overview — Compute KPIs from tickets
 // ============================================
 
 export async function fetchCSOverview(
   from: string,
-  to: string,
-  storeId?: string
+  to: string
 ): Promise<CSOverviewData> {
-  const stores = await getGorgiasStores(storeId);
+  return dedupedFetch(`overview:${from}:${to}`, async () => {
+  // Fetch in parallel: tickets created in period, tickets closed in period, total open count
+  const [createdTickets, closedTickets, totalOpen] = await Promise.all([
+    fetchAllTickets(from, to),
+    fetchTicketsClosedInPeriod(from, to),
+    fetchTotalOpenCount(),
+  ]);
 
-  if (stores.length === 0) {
-    throw new Error("No Gorgias stores configured");
+  const created = createdTickets.length;
+  const closed = closedTickets.length;
+  const replied = createdTickets.filter((t) => t.messages_count > 1).length;
+
+  // One-touch: closed with <= 2 messages (1 customer + 1 agent)
+  const oneTouch = closedTickets.filter((t) => t.messages_count <= 2).length;
+  const oneTouchRate = closed > 0 ? (oneTouch / closed) * 100 : 0;
+
+  // Resolution time (from tickets closed in period)
+  let totalResolutionTime = 0;
+  let resolutionCount = 0;
+  for (const t of closedTickets) {
+    if (t.closed_datetime) {
+      const diff =
+        (new Date(t.closed_datetime).getTime() -
+          new Date(t.created_datetime).getTime()) /
+        1000;
+      if (diff > 0) {
+        totalResolutionTime += diff;
+        resolutionCount++;
+      }
+    }
   }
+  const avgResolutionTime =
+    resolutionCount > 0 ? totalResolutionTime / resolutionCount : 0;
 
-  // Aggregate across all stores
-  const aggregated: CSOverviewData = {
-    ticketsCreated: 0,
-    ticketsClosed: 0,
-    ticketsOpen: 0,
-    ticketsReplied: 0,
-    oneTouchRate: 0,
+  // First response time — sample from tickets closed in period
+  const frtSamples = await fetchFirstResponseTimes(closedTickets);
+  const avgFirstResponseTime =
+    frtSamples.length > 0
+      ? frtSamples.reduce((a, b) => a + b, 0) / frtSamples.length
+      : 0;
+
+  return {
+    ticketsCreated: created,
+    ticketsClosed: closed,
+    ticketsOpen: totalOpen,
+    ticketsReplied: replied,
+    oneTouchRate,
     zeroTouchRate: 0,
     automationRate: 0,
-    avgFirstResponseTime: 0,
-    avgHumanFirstResponseTime: 0,
+    avgFirstResponseTime,
+    avgHumanFirstResponseTime: avgFirstResponseTime,
     avgResponseTime: 0,
-    avgResolutionTime: 0,
+    avgResolutionTime,
     avgHandleTime: 0,
     csatScore: null,
     csatResponseRate: 0,
@@ -227,161 +420,63 @@ export async function fetchCSOverview(
     slaComplianceRate: 0,
     previousPeriod: null,
   };
-
-  // Weighted averages need total counts
-  let totalForAvg = 0;
-  let csatWeightedSum = 0;
-  let csatTotalResponses = 0;
-
-  for (const store of stores) {
-    // Fetch all stats in parallel per store
-    const [
-      created,
-      closed,
-      open,
-      replied,
-      oneTouch,
-      zeroTouch,
-      automation,
-      firstResponse,
-      humanFirstResponse,
-      responseTime,
-      resolution,
-      handleTime,
-      csat,
-      sla,
-    ] = await Promise.all([
-      fetchSingleStat(store, "tickets-created", ["ticketCount"], from, to),
-      fetchSingleStat(store, "tickets-closed", ["ticketCount"], from, to),
-      fetchSingleStat(store, "tickets-open", ["ticketCount"], from, to),
-      fetchSingleStat(store, "tickets-replied", ["ticketCount"], from, to),
-      fetchSingleStat(store, "one-touch-tickets", ["ticketCount", "oneTouchRate"], from, to),
-      fetchSingleStat(store, "zero-touch-tickets", ["ticketCount", "zeroTouchRate"], from, to),
-      fetchSingleStat(store, "automation-rate", ["automationRate"], from, to),
-      fetchSingleStat(store, "first-response-time", ["medianFirstResponseTime", "averageFirstResponseTime"], from, to),
-      fetchSingleStat(store, "human-first-response-time", ["averageFirstResponseTime"], from, to),
-      fetchSingleStat(store, "response-time", ["averageResponseTime"], from, to),
-      fetchSingleStat(store, "resolution-time", ["medianResolutionTime", "averageResolutionTime"], from, to),
-      fetchSingleStat(store, "ticket-handle-time", ["averageHandleTime"], from, to),
-      fetchSingleStat(store, "satisfaction-surveys", ["averageSurveyScore", "surveyResponseRate", "surveyCount"], from, to),
-      fetchSingleStat(store, "ticket-sla", ["slaComplianceRate"], from, to),
-    ]);
-
-    const storeTickets = created.ticketCount || 0;
-    const weight = storeTickets;
-
-    aggregated.ticketsCreated += storeTickets;
-    aggregated.ticketsClosed += closed.ticketCount || 0;
-    aggregated.ticketsOpen += open.ticketCount || 0;
-    aggregated.ticketsReplied += replied.ticketCount || 0;
-
-    // Weighted averages
-    aggregated.avgFirstResponseTime += (firstResponse.averageFirstResponseTime || 0) * weight;
-    aggregated.avgHumanFirstResponseTime += (humanFirstResponse.averageFirstResponseTime || 0) * weight;
-    aggregated.avgResponseTime += (responseTime.averageResponseTime || 0) * weight;
-    aggregated.avgResolutionTime += (resolution.averageResolutionTime || 0) * weight;
-    aggregated.avgHandleTime += (handleTime.averageHandleTime || 0) * weight;
-    aggregated.automationRate += (automation.automationRate || 0) * weight;
-    aggregated.oneTouchRate += (oneTouch.oneTouchRate || 0) * weight;
-    aggregated.zeroTouchRate += (zeroTouch.zeroTouchRate || 0) * weight;
-    aggregated.slaComplianceRate += (sla.slaComplianceRate || 0) * weight;
-
-    totalForAvg += weight;
-
-    // CSAT
-    const surveysReceived = csat.surveyCount || 0;
-    if (surveysReceived > 0 && csat.averageSurveyScore) {
-      csatWeightedSum += csat.averageSurveyScore * surveysReceived;
-      csatTotalResponses += surveysReceived;
-    }
-    aggregated.csatTotal += surveysReceived;
-    aggregated.csatResponseRate += (csat.surveyResponseRate || 0) * weight;
-  }
-
-  // Calculate weighted averages
-  if (totalForAvg > 0) {
-    aggregated.avgFirstResponseTime /= totalForAvg;
-    aggregated.avgHumanFirstResponseTime /= totalForAvg;
-    aggregated.avgResponseTime /= totalForAvg;
-    aggregated.avgResolutionTime /= totalForAvg;
-    aggregated.avgHandleTime /= totalForAvg;
-    aggregated.automationRate /= totalForAvg;
-    aggregated.oneTouchRate /= totalForAvg;
-    aggregated.zeroTouchRate /= totalForAvg;
-    aggregated.slaComplianceRate /= totalForAvg;
-    aggregated.csatResponseRate /= totalForAvg;
-  }
-
-  if (csatTotalResponses > 0) {
-    aggregated.csatScore = csatWeightedSum / csatTotalResponses;
-  }
-
-  return aggregated;
+  });
 }
 
 // ============================================
-// CS Overview — Time Series for charts
+// CS Overview — Time Series
 // ============================================
+
+function dateKey(dt: string, granularity: GorgiasGranularity): string {
+  const d = new Date(dt);
+  switch (granularity) {
+    case "hour":
+      return d.toISOString().slice(0, 13) + ":00:00Z";
+    case "day":
+      return d.toISOString().slice(0, 10);
+    case "week": {
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d);
+      monday.setDate(diff);
+      return monday.toISOString().slice(0, 10);
+    }
+    case "month":
+      return d.toISOString().slice(0, 7);
+  }
+}
 
 export async function fetchCSOverviewTimeSeries(
   from: string,
   to: string,
-  granularity: GorgiasGranularity = "day",
-  storeId?: string
+  granularity: GorgiasGranularity = "day"
 ): Promise<CSOverviewTimeSeries[]> {
-  const stores = await getGorgiasStores(storeId);
-  const dateMap = new Map<string, CSOverviewTimeSeries>();
+  const tickets = await fetchAllTickets(from, to);
+  const map = new Map<string, { created: number; closed: number }>();
 
-  for (const store of stores) {
-    const [createdSeries, closedSeries] = await Promise.all([
-      fetchTimeSeries<{ createdDatetime: string; ticketCount: number }>(
-        store,
-        "tickets-created",
-        ["ticketCount"],
-        from,
-        to,
-        granularity
-      ),
-      fetchTimeSeries<{ createdDatetime: string; ticketCount: number }>(
-        store,
-        "tickets-closed",
-        ["ticketCount"],
-        from,
-        to,
-        granularity
-      ),
-    ]);
+  for (const t of tickets) {
+    const key = dateKey(t.created_datetime, granularity);
+    const entry = map.get(key) || { created: 0, closed: 0 };
+    entry.created++;
+    map.set(key, entry);
 
-    for (const row of createdSeries) {
-      const date = row.createdDatetime;
-      const existing = dateMap.get(date) || {
-        date,
-        ticketsCreated: 0,
-        ticketsClosed: 0,
-        avgFirstResponseTime: 0,
-        avgResolutionTime: 0,
-      };
-      existing.ticketsCreated += row.ticketCount || 0;
-      dateMap.set(date, existing);
-    }
-
-    for (const row of closedSeries) {
-      const date = row.createdDatetime;
-      const existing = dateMap.get(date) || {
-        date,
-        ticketsCreated: 0,
-        ticketsClosed: 0,
-        avgFirstResponseTime: 0,
-        avgResolutionTime: 0,
-      };
-      existing.ticketsClosed += row.ticketCount || 0;
-      dateMap.set(date, existing);
+    if (t.status === "closed" && t.closed_datetime) {
+      const closedKey = dateKey(t.closed_datetime, granularity);
+      const closedEntry = map.get(closedKey) || { created: 0, closed: 0 };
+      closedEntry.closed++;
+      map.set(closedKey, closedEntry);
     }
   }
 
-  return Array.from(dateMap.values()).sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
+  return Array.from(map.entries())
+    .map(([date, counts]) => ({
+      date,
+      ticketsCreated: counts.created,
+      ticketsClosed: counts.closed,
+      avgFirstResponseTime: 0,
+      avgResolutionTime: 0,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // ============================================
@@ -390,140 +485,56 @@ export async function fetchCSOverviewTimeSeries(
 
 export async function fetchChannelDistribution(
   from: string,
-  to: string,
-  storeId?: string
+  to: string
 ): Promise<ChannelDistributionData> {
-  const stores = await getGorgiasStores(storeId);
+  const tickets = await fetchAllTickets(from, to);
 
-  // Aggregate channel counts across stores
   const channelMap = new Map<
     string,
-    {
-      ticketCount: number;
-      totalFirstResponse: number;
-      totalResolution: number;
-      countForAvg: number;
-      csatSum: number;
-      csatCount: number;
-    }
+    { count: number; totalResolution: number; resolutionCount: number }
   >();
 
-  let totalTickets = 0;
+  for (const t of tickets) {
+    const ch = t.channel;
+    const entry = channelMap.get(ch) || {
+      count: 0,
+      totalResolution: 0,
+      resolutionCount: 0,
+    };
+    entry.count++;
 
-  for (const store of stores) {
-    // Tickets by channel
-    const channelBreakdown = await fetchByDimension<{
-      channel: string;
-      ticketCount: number;
-    }>(store, "tickets-created", ["ticketCount"], "channel", from, to);
-
-    // First response time by channel
-    const frtByChannel = await fetchByDimension<{
-      channel: string;
-      averageFirstResponseTime: number;
-    }>(
-      store,
-      "first-response-time",
-      ["averageFirstResponseTime"],
-      "channel",
-      from,
-      to
-    );
-
-    // Resolution time by channel
-    const resByChannel = await fetchByDimension<{
-      channel: string;
-      averageResolutionTime: number;
-    }>(
-      store,
-      "resolution-time",
-      ["averageResolutionTime"],
-      "channel",
-      from,
-      to
-    );
-
-    // CSAT by channel
-    const csatByChannel = await fetchByDimension<{
-      channel: string;
-      averageSurveyScore: number;
-      surveyCount: number;
-    }>(
-      store,
-      "satisfaction-surveys",
-      ["averageSurveyScore", "surveyCount"],
-      "channel",
-      from,
-      to
-    );
-
-    // Build lookup maps for this store
-    const frtMap = new Map(frtByChannel.map((r) => [r.channel, r]));
-    const resMap = new Map(resByChannel.map((r) => [r.channel, r]));
-    const csatMap = new Map(csatByChannel.map((r) => [r.channel, r]));
-
-    for (const row of channelBreakdown) {
-      const ch = row.channel;
-      const count = row.ticketCount || 0;
-      totalTickets += count;
-
-      const existing = channelMap.get(ch) || {
-        ticketCount: 0,
-        totalFirstResponse: 0,
-        totalResolution: 0,
-        countForAvg: 0,
-        csatSum: 0,
-        csatCount: 0,
-      };
-
-      existing.ticketCount += count;
-
-      const frt = frtMap.get(ch);
-      if (frt) {
-        existing.totalFirstResponse +=
-          (frt.averageFirstResponseTime || 0) * count;
-        existing.countForAvg += count;
+    if (t.status === "closed" && t.closed_datetime) {
+      const diff =
+        (new Date(t.closed_datetime).getTime() -
+          new Date(t.created_datetime).getTime()) /
+        1000;
+      if (diff > 0) {
+        entry.totalResolution += diff;
+        entry.resolutionCount++;
       }
-
-      const res = resMap.get(ch);
-      if (res) {
-        existing.totalResolution +=
-          (res.averageResolutionTime || 0) * count;
-      }
-
-      const csat = csatMap.get(ch);
-      if (csat && csat.surveyCount > 0) {
-        existing.csatSum += csat.averageSurveyScore * csat.surveyCount;
-        existing.csatCount += csat.surveyCount;
-      }
-
-      channelMap.set(ch, existing);
     }
+
+    channelMap.set(ch, entry);
   }
 
-  // Build sorted channel stats
+  const totalTickets = tickets.length;
+
   const channels: ChannelStats[] = Array.from(channelMap.entries())
     .map(([channel, stats]) => ({
       channel,
-      channelLabel:
-        (CHANNEL_LABELS as Record<string, string>)[channel] || channel,
-      color:
-        (CHANNEL_COLORS as Record<string, string>)[channel] || "#94a3b8",
-      ticketCount: stats.ticketCount,
+      channelLabel: CHANNEL_LABELS[channel] || channel,
+      color: CHANNEL_COLORS[channel] || "#94a3b8",
+      ticketCount: stats.count,
       percentage:
         totalTickets > 0
-          ? Math.round((stats.ticketCount / totalTickets) * 1000) / 10
+          ? Math.round((stats.count / totalTickets) * 1000) / 10
           : 0,
-      avgFirstResponseTime:
-        stats.countForAvg > 0
-          ? stats.totalFirstResponse / stats.countForAvg
-          : 0,
+      avgFirstResponseTime: 0,
       avgResolutionTime:
-        stats.countForAvg > 0
-          ? stats.totalResolution / stats.countForAvg
+        stats.resolutionCount > 0
+          ? stats.totalResolution / stats.resolutionCount
           : 0,
-      csatScore:
-        stats.csatCount > 0 ? stats.csatSum / stats.csatCount : null,
+      csatScore: null,
     }))
     .sort((a, b) => b.ticketCount - a.ticketCount);
 
@@ -531,45 +542,25 @@ export async function fetchChannelDistribution(
 }
 
 // ============================================
-// Channel Distribution — Time Series
+// Channel Time Series
 // ============================================
 
 export async function fetchChannelTimeSeries(
   from: string,
   to: string,
-  granularity: GorgiasGranularity = "day",
-  storeId?: string
+  granularity: GorgiasGranularity = "day"
 ): Promise<ChannelTimeSeries[]> {
-  const stores = await getGorgiasStores(storeId);
+  const tickets = await fetchAllTickets(from, to);
   const dateMap = new Map<string, Record<string, number>>();
 
-  for (const store of stores) {
-    const data = await fetchTimeSeries<{
-      createdDatetime: string;
-      channel: string;
-      ticketCount: number;
-    }>(
-      store,
-      "tickets-created",
-      ["ticketCount"],
-      from,
-      to,
-      granularity,
-      ["channel"]
-    );
-
-    for (const row of data) {
-      const date = row.createdDatetime;
-      const existing = dateMap.get(date) || {};
-      existing[row.channel] =
-        (existing[row.channel] || 0) + (row.ticketCount || 0);
-      dateMap.set(date, existing);
-    }
+  for (const t of tickets) {
+    const key = dateKey(t.created_datetime, granularity);
+    const entry = dateMap.get(key) || {};
+    entry[t.channel] = (entry[t.channel] || 0) + 1;
+    dateMap.set(key, entry);
   }
 
   return Array.from(dateMap.entries())
     .map(([date, channels]) => ({ date, channels }))
-    .sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
+    .sort((a, b) => a.date.localeCompare(b.date));
 }

@@ -5,7 +5,6 @@ import type { ChannelDistributionData } from "@/types/gorgias";
 interface UseChannelDistributionParams {
   period: PeriodFilter;
   dateRange?: DateRange;
-  storeId: string;
   includeTimeSeries?: boolean;
 }
 
@@ -19,7 +18,6 @@ interface UseChannelDistributionReturn {
 export function useChannelDistribution({
   period,
   dateRange,
-  storeId,
   includeTimeSeries = true,
 }: UseChannelDistributionParams): UseChannelDistributionReturn {
   const [data, setData] = useState<ChannelDistributionData | null>(null);
@@ -32,7 +30,6 @@ export function useChannelDistribution({
 
     const params = new URLSearchParams({
       period,
-      store_id: storeId,
       time_series: includeTimeSeries ? "true" : "false",
     });
 
@@ -54,7 +51,7 @@ export function useChannelDistribution({
     } finally {
       setLoading(false);
     }
-  }, [period, dateRange, storeId, includeTimeSeries]);
+  }, [period, dateRange, includeTimeSeries]);
 
   useEffect(() => {
     fetchData();
