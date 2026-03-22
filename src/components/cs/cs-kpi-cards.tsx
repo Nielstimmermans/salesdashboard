@@ -109,22 +109,30 @@ function SkeletonCard() {
 }
 
 const VIEW_ORDER = [
-  "new- one touch",
+  "new one touch",
   "sales",
   "proefrit aan huis",
   "slechte reviews",
-  "retour, annuleringen",
-  "garnatie & b2b",
+  "retour annuleringen",
+  "garantie b2b",
   "wouter check",
   "chargeback",
   "omclosen",
 ];
 
+/** Normalize for fuzzy matching: lowercase, strip punctuation/extra spaces */
+function norm(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
 function sortAndFilterViews(views: ViewTicketCount[]): ViewTicketCount[] {
   return VIEW_ORDER
     .map((ordered) => {
-      const target = ordered.toLowerCase();
-      return views.find((v) => v.name.toLowerCase().includes(target) || target.includes(v.name.toLowerCase()));
+      const target = norm(ordered);
+      return views.find((v) => {
+        const name = norm(v.name);
+        return name.includes(target) || target.includes(name);
+      });
     })
     .filter((v): v is ViewTicketCount => v !== undefined);
 }
@@ -142,11 +150,16 @@ export function CSKpiCards({ data, viewCounts, loading }: CSKpiCardsProps) {
 
   const prev = data.previousPeriod;
 
+  // Use sum of all view counts as total open tickets (more accurate than period-only count)
+  const totalOpen = viewCounts && viewCounts.length > 0
+    ? viewCounts.reduce((sum, v) => sum + v.count, 0)
+    : data.ticketsOpen;
+
   const cards: KpiCardProps[] = [
     {
       title: "Tickets aangemaakt",
       value: data.ticketsCreated.toLocaleString("nl-NL"),
-      subtitle: `${data.ticketsOpen} nog open`,
+      subtitle: `${totalOpen} totaal open`,
       icon: <Ticket className="h-5 w-5 text-indigo-600" />,
       iconBg: "bg-indigo-50",
       change: prev ? (

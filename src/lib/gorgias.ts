@@ -181,7 +181,7 @@ async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<Gor
     const fromDate = new Date(from);
     const toDate = new Date(to);
 
-    const MAX_PAGES = 10; // Limit scan depth to prevent excessive API calls
+    const MAX_PAGES = 30; // Scan up to 3000 tickets to find closed ones in period
     let page = 0;
 
     while (page < MAX_PAGES) {
