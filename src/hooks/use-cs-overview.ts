@@ -44,7 +44,11 @@ export function useCSOverview({
     }
 
     try {
-      const res = await fetch(`/api/cs/overview?${params}`);
+      // Fetch overview + view counts in parallel, but don't block on view counts
+      const overviewPromise = fetch(`/api/cs/overview?${params}`);
+      const viewsPromise = fetch("/api/cs/views");
+
+      const res = await overviewPromise;
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.error || "Failed to fetch");
@@ -52,10 +56,17 @@ export function useCSOverview({
       const json = await res.json();
       setData(json.overview);
       setTimeSeries(json.timeSeries || []);
-      setViewCounts(json.viewCounts || []);
+      setLoading(false);
+
+      // View counts load in background — don't block KPIs
+      viewsPromise
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (json?.viewCounts) setViewCounts(json.viewCounts);
+        })
+        .catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
       setLoading(false);
     }
   }, [period, dateRange, includeTimeSeries]);

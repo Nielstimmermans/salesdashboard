@@ -12,8 +12,8 @@ import { CHANNEL_LABELS, CHANNEL_COLORS } from "@/types/gorgias";
 // Gorgias REST API Client — Tickets-based
 // ============================================
 
-// --- In-memory cache (5 min TTL) + promise deduplication ---
-const CACHE_TTL = 5 * 60 * 1000;
+// --- In-memory cache (15 min TTL) + promise deduplication ---
+const CACHE_TTL = 15 * 60 * 1000;
 const cache = new Map<string, { data: unknown; expires: number }>();
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -181,7 +181,10 @@ async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<Gor
     const fromDate = new Date(from);
     const toDate = new Date(to);
 
-    while (true) {
+    const MAX_PAGES = 10; // Limit scan depth to prevent excessive API calls
+    let page = 0;
+
+    while (page < MAX_PAGES) {
       const url = new URL(`${baseUrl}/api/tickets`);
       url.searchParams.set("limit", "100");
       url.searchParams.set("order_by", "updated_datetime:desc");
@@ -196,7 +199,6 @@ async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<Gor
       let foundOlder = false;
 
       for (const ticket of data.data) {
-        // Skip non-closed tickets
         if (ticket.status !== "closed" || !ticket.closed_datetime) continue;
         const closed = new Date(ticket.closed_datetime);
         if (closed < fromDate) {
@@ -208,43 +210,11 @@ async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<Gor
 
       if (foundOlder || !data.meta.next_cursor || data.data.length === 0) break;
       cursor = data.meta.next_cursor;
+      page++;
       await new Promise((r) => setTimeout(r, 500));
     }
 
     return all;
-  });
-}
-
-/**
- * Count total open tickets across all time.
- * Paginates through all tickets ordered by updated_datetime, counting those with status=open.
- */
-async function fetchTotalOpenCount(): Promise<number> {
-  return dedupedFetch("openCount", async () => {
-    const { baseUrl, headers } = getGorgiasAuth();
-    let count = 0;
-    let cursor: string | null = null;
-
-    while (true) {
-      const url = new URL(`${baseUrl}/api/tickets`);
-      url.searchParams.set("limit", "100");
-      url.searchParams.set("order_by", "updated_datetime:desc");
-      if (cursor) url.searchParams.set("cursor", cursor);
-
-      const res = await fetchWithRetry(url.toString(), { headers });
-      if (!res.ok) break;
-
-      const data: GorgiasListResponse<GorgiasTicket> = await res.json();
-      for (const ticket of data.data) {
-        if (ticket.status === "open") count++;
-      }
-
-      if (!data.meta.next_cursor || data.data.length === 0) break;
-      cursor = data.meta.next_cursor;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    return count;
   });
 }
 
@@ -361,15 +331,15 @@ export async function fetchCSOverview(
   to: string
 ): Promise<CSOverviewData> {
   return dedupedFetch(`overview:${from}:${to}`, async () => {
-  // Fetch in parallel: tickets created in period, tickets closed in period, total open count
-  const [createdTickets, closedTickets, totalOpen] = await Promise.all([
+  // Fetch in parallel: tickets created in period + tickets closed in period
+  const [createdTickets, closedTickets] = await Promise.all([
     fetchAllTickets(from, to),
     fetchTicketsClosedInPeriod(from, to),
-    fetchTotalOpenCount(),
   ]);
 
   const created = createdTickets.length;
   const closed = closedTickets.length;
+  const open = createdTickets.filter((t) => t.status === "open").length;
   const replied = createdTickets.filter((t) => t.messages_count > 1).length;
 
   // One-touch: closed with <= 2 messages (1 customer + 1 agent)
@@ -404,7 +374,7 @@ export async function fetchCSOverview(
   return {
     ticketsCreated: created,
     ticketsClosed: closed,
-    ticketsOpen: totalOpen,
+    ticketsOpen: open,
     ticketsReplied: replied,
     oneTouchRate,
     zeroTouchRate: 0,
