@@ -79,12 +79,6 @@ interface GorgiasTicket {
   from_agent: boolean;
 }
 
-interface GorgiasMessage {
-  id: number;
-  from_agent: boolean;
-  created_datetime: string;
-}
-
 interface GorgiasView {
   id: number;
   name: string;
@@ -168,107 +162,6 @@ async function fetchAllTickets(from: string, to: string): Promise<GorgiasTicket[
   });
 }
 
-/**
- * Fetch tickets that were CLOSED within a date range (regardless of when they were created).
- * Uses updated_datetime ordering to find recently closed tickets, filters client-side.
- */
-async function fetchTicketsClosedInPeriod(from: string, to: string): Promise<GorgiasTicket[]> {
-  return dedupedFetch(`closed:${from}:${to}`, async () => {
-    const { baseUrl, headers } = getGorgiasAuth();
-    const all: GorgiasTicket[] = [];
-    let cursor: string | null = null;
-
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
-
-    const MAX_PAGES = 30; // Scan up to 3000 tickets to find closed ones in period
-    let page = 0;
-
-    while (page < MAX_PAGES) {
-      const url = new URL(`${baseUrl}/api/tickets`);
-      url.searchParams.set("limit", "100");
-      url.searchParams.set("order_by", "updated_datetime:desc");
-      if (cursor) url.searchParams.set("cursor", cursor);
-
-      const res = await fetchWithRetry(url.toString(), { headers });
-      if (!res.ok) {
-        throw new Error(`Gorgias API error ${res.status}: ${await res.text()}`);
-      }
-
-      const data: GorgiasListResponse<GorgiasTicket> = await res.json();
-      let foundOlder = false;
-
-      for (const ticket of data.data) {
-        if (ticket.status !== "closed" || !ticket.closed_datetime) continue;
-        const closed = new Date(ticket.closed_datetime);
-        if (closed < fromDate) {
-          foundOlder = true;
-          break;
-        }
-        if (closed <= toDate) all.push(ticket);
-      }
-
-      if (foundOlder || !data.meta.next_cursor || data.data.length === 0) break;
-      cursor = data.meta.next_cursor;
-      page++;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    return all;
-  });
-}
-
-/**
- * Fetch first response time for a sample of tickets.
- * Limited to 15 tickets in batches of 3 to stay within rate limits.
- */
-async function fetchFirstResponseTimes(
-  closedTickets: GorgiasTicket[],
-  maxTickets = 15
-): Promise<number[]> {
-  const { baseUrl, headers } = getGorgiasAuth();
-  const sample = closedTickets.slice(0, maxTickets);
-  const times: number[] = [];
-
-  for (let i = 0; i < sample.length; i += 3) {
-    const batch = sample.slice(i, i + 3);
-    const results = await Promise.all(
-      batch.map(async (ticket) => {
-        try {
-          const url = new URL(`${baseUrl}/api/tickets/${ticket.id}/messages`);
-          url.searchParams.set("limit", "5");
-          url.searchParams.set("order_by", "created_datetime:asc");
-
-          const res = await fetchWithRetry(url.toString(), { headers });
-          if (!res.ok) return null;
-
-          const data: GorgiasListResponse<GorgiasMessage> = await res.json();
-          const firstAgent = data.data.find((m) => m.from_agent);
-          if (!firstAgent) return null;
-
-          const diff =
-            (new Date(firstAgent.created_datetime).getTime() -
-              new Date(ticket.created_datetime).getTime()) /
-            1000;
-          return diff > 0 ? diff : null;
-        } catch {
-          return null;
-        }
-      })
-    );
-
-    for (const r of results) {
-      if (r !== null) times.push(r);
-    }
-
-    if (i + 3 < sample.length) {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
-
-  return times;
-}
-
 // ============================================
 // Views — Open ticket counts per view
 // ============================================
@@ -323,130 +216,163 @@ export async function fetchViewCounts(): Promise<ViewTicketCount[]> {
 }
 
 // ============================================
-// CS Overview — Compute KPIs from tickets
+// CS Overview — Direct from Gorgias Stats API
 // ============================================
+
+interface GorgiasOverviewStat {
+  name: string;
+  type: string;
+  value: number;
+  delta: number;
+  more_is_better?: boolean;
+}
+
+interface GorgiasOverviewResponse {
+  data: {
+    data: GorgiasOverviewStat[];
+  };
+  meta: {
+    start_datetime: string;
+    end_datetime: string;
+    previous_start_datetime: string;
+    previous_end_datetime: string;
+  };
+}
+
+async function fetchGorgiasOverviewStats(
+  from: string,
+  to: string
+): Promise<GorgiasOverviewResponse> {
+  const { baseUrl, headers } = getGorgiasAuth();
+  const res = await fetchWithRetry(
+    `${baseUrl}/api/stats/overview`,
+    {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filters: {
+          period: {
+            start_datetime: from,
+            end_datetime: to,
+          },
+        },
+      }),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Gorgias stats/overview error ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
 
 export async function fetchCSOverview(
   from: string,
   to: string
 ): Promise<CSOverviewData> {
   return dedupedFetch(`overview:${from}:${to}`, async () => {
-  // Fetch in parallel: tickets created in period + tickets closed in period
-  const [createdTickets, closedTickets] = await Promise.all([
-    fetchAllTickets(from, to),
-    fetchTicketsClosedInPeriod(from, to),
-  ]);
+    const stats = await fetchGorgiasOverviewStats(from, to);
+    const byName = new Map(stats.data.data.map((s) => [s.name, s]));
 
-  const created = createdTickets.length;
-  const closed = closedTickets.length;
-  const open = createdTickets.filter((t) => t.status === "open").length;
-  const replied = createdTickets.filter((t) => t.messages_count > 1).length;
+    const get = (name: string) => byName.get(name)?.value ?? 0;
+    const getDelta = (name: string) => byName.get(name)?.delta ?? null;
 
-  // One-touch: closed with <= 2 messages (1 customer + 1 agent)
-  const oneTouch = closedTickets.filter((t) => t.messages_count <= 2).length;
-  const oneTouchRate = closed > 0 ? (oneTouch / closed) * 100 : 0;
+    const created = get("total_new_tickets");
+    const closed = get("total_closed_tickets");
+    const replied = get("total_replied_tickets");
+    const firstResponseTime = get("median_first_response_time");
+    const resolutionTime = get("median_resolution_time");
+    const oneTouchRate = get("total_one_touch_tickets"); // Already a percentage
 
-  // Resolution time (from tickets closed in period)
-  let totalResolutionTime = 0;
-  let resolutionCount = 0;
-  for (const t of closedTickets) {
-    if (t.closed_datetime) {
-      const diff =
-        (new Date(t.closed_datetime).getTime() -
-          new Date(t.created_datetime).getTime()) /
-        1000;
-      if (diff > 0) {
-        totalResolutionTime += diff;
-        resolutionCount++;
-      }
-    }
-  }
-  const avgResolutionTime =
-    resolutionCount > 0 ? totalResolutionTime / resolutionCount : 0;
+    // Compute previous period values using delta (percentage change)
+    const prevCreated = computePrevious(created, getDelta("total_new_tickets"));
+    const prevClosed = computePrevious(closed, getDelta("total_closed_tickets"));
+    const prevFRT = computePrevious(firstResponseTime, getDelta("median_first_response_time"));
+    const prevRT = computePrevious(resolutionTime, getDelta("median_resolution_time"));
 
-  // First response time — sample from tickets closed in period
-  const frtSamples = await fetchFirstResponseTimes(closedTickets);
-  const avgFirstResponseTime =
-    frtSamples.length > 0
-      ? frtSamples.reduce((a, b) => a + b, 0) / frtSamples.length
-      : 0;
-
-  return {
-    ticketsCreated: created,
-    ticketsClosed: closed,
-    ticketsOpen: open,
-    ticketsReplied: replied,
-    oneTouchRate,
-    zeroTouchRate: 0,
-    automationRate: 0,
-    avgFirstResponseTime,
-    avgHumanFirstResponseTime: avgFirstResponseTime,
-    avgResponseTime: 0,
-    avgResolutionTime,
-    avgHandleTime: 0,
-    csatScore: null,
-    csatResponseRate: 0,
-    csatTotal: 0,
-    slaComplianceRate: 0,
-    previousPeriod: null,
-  };
+    return {
+      ticketsCreated: created,
+      ticketsClosed: closed,
+      ticketsOpen: 0, // Will be overridden by view counts in the UI
+      ticketsReplied: replied,
+      oneTouchRate,
+      zeroTouchRate: 0,
+      automationRate: 0,
+      avgFirstResponseTime: firstResponseTime,
+      avgHumanFirstResponseTime: firstResponseTime,
+      avgResponseTime: 0,
+      avgResolutionTime: resolutionTime,
+      avgHandleTime: 0,
+      csatScore: null,
+      csatResponseRate: 0,
+      csatTotal: 0,
+      slaComplianceRate: 0,
+      previousPeriod: {
+        ticketsCreated: prevCreated,
+        ticketsClosed: prevClosed,
+        avgFirstResponseTime: prevFRT,
+        avgResolutionTime: prevRT,
+        csatScore: null,
+      },
+    };
   });
 }
 
-// ============================================
-// CS Overview — Time Series
-// ============================================
-
-function dateKey(dt: string, granularity: GorgiasGranularity): string {
-  const d = new Date(dt);
-  switch (granularity) {
-    case "hour":
-      return d.toISOString().slice(0, 13) + ":00:00Z";
-    case "day":
-      return d.toISOString().slice(0, 10);
-    case "week": {
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(d);
-      monday.setDate(diff);
-      return monday.toISOString().slice(0, 10);
-    }
-    case "month":
-      return d.toISOString().slice(0, 7);
-  }
+/** Compute previous period absolute value from current value and delta percentage */
+function computePrevious(current: number, deltaPercent: number | null): number {
+  if (deltaPercent === null || deltaPercent === 0) return current;
+  // delta is percentage change: ((current - previous) / previous) * 100
+  // so: previous = current / (1 + delta/100)
+  const factor = 1 + deltaPercent / 100;
+  return factor !== 0 ? Math.round(current / factor) : current;
 }
+
+// ============================================
+// CS Overview — Time Series (from Gorgias Stats)
+// ============================================
 
 export async function fetchCSOverviewTimeSeries(
   from: string,
   to: string,
-  granularity: GorgiasGranularity = "day"
+  _granularity: GorgiasGranularity = "day"
 ): Promise<CSOverviewTimeSeries[]> {
-  const tickets = await fetchAllTickets(from, to);
-  const map = new Map<string, { created: number; closed: number }>();
-
-  for (const t of tickets) {
-    const key = dateKey(t.created_datetime, granularity);
-    const entry = map.get(key) || { created: 0, closed: 0 };
-    entry.created++;
-    map.set(key, entry);
-
-    if (t.status === "closed" && t.closed_datetime) {
-      const closedKey = dateKey(t.closed_datetime, granularity);
-      const closedEntry = map.get(closedKey) || { created: 0, closed: 0 };
-      closedEntry.closed++;
-      map.set(closedKey, closedEntry);
+  return dedupedFetch(`timeseries:${from}:${to}`, async () => {
+    const { baseUrl, headers } = getGorgiasAuth();
+    const res = await fetchWithRetry(
+      `${baseUrl}/api/stats/support-volume`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filters: {
+            period: {
+              start_datetime: from,
+              end_datetime: to,
+            },
+          },
+        }),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`Gorgias stats/support-volume error ${res.status}`);
     }
-  }
+    const json = await res.json();
+    const data = json.data?.data;
+    if (!data?.axes?.x) return [];
 
-  return Array.from(map.entries())
-    .map(([date, counts]) => ({
-      date,
-      ticketsCreated: counts.created,
-      ticketsClosed: counts.closed,
+    const timestamps: number[] = data.axes.x;
+    const lines = data.lines as { name: string; data: number[] }[];
+
+    const createdLine = lines.find((l) => l.name === "created")?.data || [];
+    const closedLine = lines.find((l) => l.name === "closed")?.data || [];
+
+    return timestamps.map((ts, i) => ({
+      date: new Date(ts * 1000).toISOString().slice(0, 10),
+      ticketsCreated: createdLine[i] || 0,
+      ticketsClosed: closedLine[i] || 0,
       avgFirstResponseTime: 0,
       avgResolutionTime: 0,
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    }));
+  });
 }
 
 // ============================================
@@ -514,6 +440,25 @@ export async function fetchChannelDistribution(
 // ============================================
 // Channel Time Series
 // ============================================
+
+function dateKey(dt: string, granularity: GorgiasGranularity): string {
+  const d = new Date(dt);
+  switch (granularity) {
+    case "hour":
+      return d.toISOString().slice(0, 13) + ":00:00Z";
+    case "day":
+      return d.toISOString().slice(0, 10);
+    case "week": {
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d);
+      monday.setDate(diff);
+      return monday.toISOString().slice(0, 10);
+    }
+    case "month":
+      return d.toISOString().slice(0, 7);
+  }
+}
 
 export async function fetchChannelTimeSeries(
   from: string,
