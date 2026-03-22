@@ -1,0 +1,50 @@
+name: sales-dashboard
+region: ams
+services:
+  - name: web
+    github:
+      repo: your-org/sales-dashboard
+      branch: main
+      deploy_on_push: true
+    build_command: npm run build
+    run_command: npm start
+    environment_slug: node-js
+    instance_count: 1
+    instance_size_slug: professional-xs
+    http_port: 3000
+    envs:
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: CLERK_SECRET_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        scope: RUN_AND_BUILD_TIME
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        scope: RUN_AND_BUILD_TIME
+        value: /sign-up
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+        scope: RUN_AND_BUILD_TIME
+        value: /dashboard
+      - key: NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
+        scope: RUN_AND_BUILD_TIME
+        value: /dashboard
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: SHOPIFY_WEBHOOK_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: NEXT_PUBLIC_APP_URL
+        scope: RUN_AND_BUILD_TIME
+        value: ${APP_URL}
+    routes:
+      - path: /

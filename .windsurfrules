@@ -1,0 +1,177 @@
+# Performance Dashboard - Windsurf Project Rules
+
+## Project Overview
+Een intern performance dashboard dat sales- en customer service data combineert.
+Sales data komt via Shopify order tags, CS data via de Gorgias Statistics API.
+Meerdere Shopify/Gorgias stores worden gekoppeld. Dashboard draait op Digital Ocean.
+
+## Tech Stack
+- **Framework**: Next.js 14 (App Router) met TypeScript
+- **Styling**: Tailwind CSS + shadcn/ui componenten
+- **Auth**: Clerk (Nederlandse lokalisatie)
+- **Database**: Supabase (PostgreSQL)
+- **Data Sources**: Shopify Admin API (GraphQL) + Gorgias REST API (Statistics)
+- **Charts**: Recharts
+- **Hosting**: Digital Ocean App Platform
+- **Taal**: Nederlands voor UI, Engels voor code/comments
+
+## Architectuur
+- Gebruik de App Router (src/app/) met server components waar mogelijk
+- Client components alleen waar interactie nodig is ("use client")
+- API routes in src/app/api/ met Clerk auth checks
+- Supabase client in src/lib/supabase.ts (anon key voor client, service role voor server)
+- Gorgias client in src/lib/gorgias.ts (server-only, via API routes)
+- Types centraal in src/types/index.ts (sales) en src/types/gorgias.ts (CS)
+- Custom hooks in src/hooks/ voor data fetching (useCSOverview, useChannelDistribution)
+
+## Coding Conventies
+- TypeScript strict mode
+- Alle componenten als function components met named exports
+- shadcn/ui componenten installeren via `npx shadcn-ui@latest add [component]`
+- Formattering: Prettier defaults
+- Imports met @ alias: `import { X } from "@/lib/utils"`
+
+## Database
+- Schema staat in supabase/migrations/001_initial_schema.sql
+- Gebruik altijd supabaseAdmin (service role) in API routes
+- Nooit Supabase direct vanuit client components — altijd via API routes
+- Orders filteren: ALTIJD `financial_status NOT IN ('voided', 'cancelled')` meenemen
+- Net amount = total_paid - refund_amount (computed column)
+- Stores tabel bevat zowel Shopify als Gorgias credentials (Gorgias velden zijn nullable)
+
+## Shopify Integratie
+- Elke store heeft zijn eigen Custom App met access_token
+- Orders ophalen via GraphQL Admin API (2024-01 versie)
+- Tags matchen: order tags (lowercase) vergelijken met employee tags
+- Een order kan meerdere tags hebben → telt bij meerdere medewerkers
+- Webhook verificatie via HMAC-SHA256
+
+## Gorgias Integratie
+- Auth: Basic Auth met base64(email:apiKey) per store
+- Base URL: https://{domain}.gorgias.com
+- Credentials worden opgeslagen in de stores tabel (gorgias_domain, gorgias_email, gorgias_api_key)
+- Alle data via Statistics endpoint: POST /api/stats/{stat_name}
+- Request body altijd met: scope, filters, measures, dimensions (optioneel), time_dimensions (optioneel), timezone
+- Date filtering via filters: [{ member: "periodStart", operator: "afterDate", values: ["ISO date"] }, { member: "periodEnd", operator: "beforeDate", values: ["ISO date"] }]
+- Dimensions voor grouping: "channel", "agentId", "tagId", "storeId"
+- Time dimensions voor trends: { dimension: "createdDatetime", granularity: "day"|"week"|"month"|"hour" }
+- Timezone altijd "Europe/Amsterdam"
+- Gorgias data wordt NIET gecacht in Supabase — altijd real-time opgehaald via API
+- Multi-store: loop over alle stores met gorgias credentials, aggregeer resultaten met gewogen gemiddelden
+
+### Beschikbare Gorgias Stats
+Volumes: tickets-created, tickets-closed, tickets-open, tickets-replied, one-touch-tickets, zero-touch-tickets
+Snelheid: first-response-time, human-first-response-time, response-time, resolution-time, ticket-handle-time
+Kwaliteit: satisfaction-surveys, auto-qa, ticket-sla
+Automatisering: automation-rate, automated-interactions
+Berichten: messages-sent, messages-received, messages-per-ticket
+Overig: tags, online-time, workload-tickets, voice-calls, voice-calls-summary, knowledge-insights
+
+## Rollen
+- **admin**: Ziet alle data, kan stores/medewerkers/bonussen beheren
+- **employee**: Ziet alleen eigen sales en orders, ziet leaderboard + CS stats
+
+## Bonussysteem
+Drie typen: fixed (vast bedrag bij target), percentage (% boven target), tiered (staffel met meerdere niveaus).
+Configureerbaar per week of maand. Toewijsbaar aan individuele medewerkers of iedereen.
+
+## Key Business Rules
+1. Geannuleerde orders tellen NIET mee (financial_status = cancelled/voided)
+2. Refunds worden in mindering gebracht: netto = total_paid - refund_amount
+3. Elke medewerker heeft een unieke tag (lowercase, geen spaties)
+4. Week = maandag t/m zondag
+5. Alle bedragen in EUR
+6. Orders zijn per tag-store combinatie uniek (composite key)
+7. Gorgias tijden worden in seconden geretourneerd → format als "Xm" of "Xu Xm"
+8. CSAT scores zijn op schaal 1-5
+9. Bij multi-store aggregatie: gewogen gemiddelden op basis van ticket count
+
+## Navigatie Structuur
+sidebar.tsx bevat 3 secties:
+- **Sales**: Dashboard, Orders, Leaderboard, Bonussen
+- **Customer Service**: CS Overview (/cs), Kanalen (/cs/channels)
+- **Beheer**: Instellingen (admin only)
+
+## Bestaande Componenten & Bestanden
+
+### Sales (bestaand, stubs)
+- src/components/dashboard/stats-cards.tsx
+- src/components/dashboard/sales-chart.tsx
+- src/components/dashboard/sales-table.tsx
+- src/components/dashboard/orders-table.tsx
+- src/components/dashboard/leaderboard-view.tsx
+- src/components/dashboard/bonus-config-panel.tsx
+- src/components/dashboard/bonus-progress-panel.tsx
+- src/components/dashboard/store-management.tsx
+- src/components/dashboard/employee-management.tsx
+- src/components/dashboard/period-filter.tsx
+- src/components/dashboard/store-filter.tsx
+
+### Customer Service (nieuw, functioneel)
+- src/lib/gorgias.ts — Volledige API client met fetchCSOverview, fetchChannelDistribution, fetchChannelTimeSeries
+- src/types/gorgias.ts — Alle types, channel labels/colors, stat types
+- src/hooks/use-cs-overview.ts — Data fetching hook
+- src/hooks/use-channel-distribution.ts — Data fetching hook
+- src/components/cs/cs-kpi-cards.tsx — 8 KPI cards (tickets, responstijden, CSAT, SLA, automation)
+- src/components/cs/cs-ticket-chart.tsx — Area chart: tickets created vs closed over tijd
+- src/components/cs/channel-donut-chart.tsx — Donut chart met totaal in center
+- src/components/cs/channel-breakdown-table.tsx — Tabel per kanaal met tickets, %, responstijd, CSAT
+- src/components/cs/channel-stacked-chart.tsx — Stacked bar chart: tickets per kanaal over tijd
+
+### API Routes
+- /api/cs/overview — CS KPI's aggregated over stores
+- /api/cs/channels — Kanaalverdeling met metrics per kanaal
+- /api/stats — Sales stats (Shopify)
+- /api/orders — Gefilterde orders
+- /api/leaderboard — Leaderboard data
+- /api/bonuses — Bonus CRUD
+- /api/bonuses/progress — Voortgang per medewerker
+- /api/stores — Store CRUD
+- /api/employees — Employee CRUD
+- /api/shopify/sync — Order sync trigger
+- /api/shopify/webhook — Shopify webhook handler
+
+## TODO's / Nog te implementeren
+
+### Sales TODO's (prioriteit)
+1. StatsCards - data fetching aansluiten op /api/stats
+2. SalesChart - data fetching + trend grafiek met Recharts
+3. SalesTable - data fetching aansluiten
+4. OrdersTable - data fetching + CSV export implementeren
+5. LeaderboardView - data fetching aansluiten
+6. BonusConfigPanel - CRUD formulier (modal met type selectie, tiers UI, staffel builder)
+7. BonusProgressPanel - data fetching + progress bars
+8. StoreManagement - CRUD formulier (modal met Shopify + Gorgias credential velden)
+9. EmployeeManagement - CRUD formulier (modal met naam, tag, rol, clerk_user_id)
+10. PeriodFilter - react-day-picker integreren voor custom daterange
+11. StoreFilter - data fetching voor stores dropdown
+
+### CS TODO's (prioriteit)
+12. CS Overview: vorige periode vergelijking implementeren (previousPeriod in CSOverviewData)
+13. CS Overview: response time trend chart toevoegen (naast ticket volume chart)
+14. Kanalen: verdieping per kanaal — click-through naar detail met alle metrics
+15. Agent Performance pagina: nieuwe pagina /cs/agents met per-agent stats (online-time, handle-time, CSAT)
+16. CSAT Detail pagina: individuele survey responses, trends, per-agent CSAT
+17. SLA Detail: welke tickets breken SLA, breakdown per kanaal
+18. Gorgias webhook: real-time updates wanneer tickets worden gesloten
+
+### General TODO's
+19. Middleware - clerk_user_id → employee role mapping
+20. Webhook registratie script voor Shopify stores
+21. Cron job of scheduled task voor periodieke order sync
+22. shadcn/ui componenten installeren: button, dialog, input, select, toast, progress, switch, tabs, date-picker, dropdown-menu, badge
+23. Loading states en error handling verbeteren (error boundaries)
+24. Mobile responsive sidebar (hamburger menu)
+25. Toast notifications bij CRUD acties
+26. Rate limiting op Gorgias API calls (max 2 req/sec per store)
+27. API response caching met Next.js revalidate of SWR
+
+## Deployment Checklist
+1. Supabase project aanmaken en migration uitvoeren
+2. Clerk project aanmaken (Nederlandse taal instellen)
+3. Per Shopify store: Custom App aanmaken met read_orders scope
+4. Per Gorgias helpdesk: API key aanmaken via Settings > REST API
+5. Environment variables instellen in Digital Ocean
+6. GitHub repo koppelen aan Digital Ocean App Platform
+7. Webhook URL registreren bij elke Shopify store
+8. Eerste admin user aanmaken in employees tabel met clerk_user_id
