@@ -7,7 +7,7 @@ import { OrdersTable } from "@/components/dashboard/orders-table";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function OrdersPage() {
-  const [period, setPeriod] = useState<PeriodFilterType>("month");
+  const [period, setPeriod] = useState<PeriodFilterType>("day");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [storeId, setStoreId] = useState<string>("all");
   const [selectedTag, setSelectedTag] = useState<string>("all");

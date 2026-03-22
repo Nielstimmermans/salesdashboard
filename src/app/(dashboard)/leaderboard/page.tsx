@@ -7,7 +7,7 @@ import { LeaderboardView } from "@/components/dashboard/leaderboard-view";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function LeaderboardPage() {
-  const [period, setPeriod] = useState<PeriodFilterType>("month");
+  const [period, setPeriod] = useState<PeriodFilterType>("day");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [storeId, setStoreId] = useState<string>("all");
 

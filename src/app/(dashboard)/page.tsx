@@ -9,7 +9,7 @@ import { StoreFilter } from "@/components/dashboard/store-filter";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function DashboardPage() {
-  const [period, setPeriod] = useState<PeriodFilterType>("month");
+  const [period, setPeriod] = useState<PeriodFilterType>("day");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [storeId, setStoreId] = useState<string>("all");
 

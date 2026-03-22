@@ -8,7 +8,7 @@ import { useCSOverview } from "@/hooks/use-cs-overview";
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
 
 export default function CSOverviewPage() {
-  const [period, setPeriod] = useState<PeriodFilterType>("month");
+  const [period, setPeriod] = useState<PeriodFilterType>("day");
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
 
   const { data, timeSeries, viewCounts, loading, error } = useCSOverview({
