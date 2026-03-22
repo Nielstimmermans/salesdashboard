@@ -13,6 +13,7 @@ interface BonusFormData {
   target_amount: string;
   bonus_value: string;
   percentage_value: string;
+  reward_label: string;
   tiers: BonusTier[];
   apply_to_all: boolean;
   employee_ids: string[];
@@ -26,6 +27,7 @@ const emptyForm: BonusFormData = {
   target_amount: "",
   bonus_value: "",
   percentage_value: "",
+  reward_label: "",
   tiers: [{ threshold: 0, bonus: 0 }],
   apply_to_all: true,
   employee_ids: [],
@@ -100,6 +102,7 @@ export function BonusConfigPanel() {
       target_amount: config.target_amount?.toString() || "",
       bonus_value: config.bonus_value?.toString() || "",
       percentage_value: config.percentage_value?.toString() || "",
+      reward_label: config.reward_label || "",
       tiers: config.tiers && config.tiers.length > 0
         ? config.tiers
         : [{ threshold: 0, bonus: 0 }],
@@ -138,11 +141,13 @@ export function BonusConfigPanel() {
       target_amount: parseFloat(form.target_amount),
       apply_to_all: form.apply_to_all,
       employee_ids: form.apply_to_all ? [] : form.employee_ids,
+      reward_label: form.reward_label.trim() || null,
     };
 
     if (form.type === "fixed") {
-      if (!form.bonus_value || parseFloat(form.bonus_value) <= 0) {
-        setError("Bonusbedrag is verplicht");
+      // Allow either a monetary value or a reward label (like "Teamuitje")
+      if ((!form.bonus_value || parseFloat(form.bonus_value) <= 0) && !form.reward_label.trim()) {
+        setError("Vul een bonusbedrag of beloning in");
         setSaving(false);
         return;
       }
@@ -405,21 +410,40 @@ export function BonusConfigPanel() {
 
             {/* Type-specific fields */}
             {form.type === "fixed" && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Bonusbedrag (bij behalen target)
-                </label>
-                <div className="relative mt-1">
-                  <span className="absolute left-3 top-2 text-sm text-gray-400">€</span>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Bonusbedrag (bij behalen target)
+                  </label>
+                  <div className="relative mt-1">
+                    <span className="absolute left-3 top-2 text-sm text-gray-400">€</span>
+                    <input
+                      type="number"
+                      value={form.bonus_value}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, bonus_value: e.target.value }))
+                      }
+                      placeholder="250"
+                      className="w-full rounded-lg border py-2 pl-7 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Of beloning (tekst)
+                  </label>
                   <input
-                    type="number"
-                    value={form.bonus_value}
+                    type="text"
+                    value={form.reward_label}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, bonus_value: e.target.value }))
+                      setForm((f) => ({ ...f, reward_label: e.target.value }))
                     }
-                    placeholder="250"
-                    className="w-full rounded-lg border py-2 pl-7 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Bijv. Teamuitje, Cadeaubon, etc."
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                   />
+                  <p className="mt-1 text-xs text-gray-400">
+                    Vul een bedrag in, een beloning, of beide
+                  </p>
                 </div>
               </div>
             )}
@@ -452,41 +476,57 @@ export function BonusConfigPanel() {
                 </label>
                 <div className="mt-2 space-y-2">
                   {form.tiers.map((tier, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <span className="absolute left-3 top-2 text-xs text-gray-400">
-                          Vanaf €
-                        </span>
+                    <div key={i} className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-2 text-xs text-gray-400">
+                            Vanaf €
+                          </span>
+                          <input
+                            type="number"
+                            value={tier.threshold || ""}
+                            onChange={(e) =>
+                              updateTier(i, "threshold", e.target.value)
+                            }
+                            className="w-full rounded-lg border py-2 pl-16 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-2 text-xs text-gray-400">
+                            Bonus €
+                          </span>
+                          <input
+                            type="number"
+                            value={tier.bonus || ""}
+                            onChange={(e) =>
+                              updateTier(i, "bonus", e.target.value)
+                            }
+                            className="w-full rounded-lg border py-2 pl-16 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
                         <input
-                          type="number"
-                          value={tier.threshold || ""}
-                          onChange={(e) =>
-                            updateTier(i, "threshold", e.target.value)
-                          }
-                          className="w-full rounded-lg border py-2 pl-16 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          type="text"
+                          value={tier.reward_label || ""}
+                          onChange={(e) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              tiers: prev.tiers.map((t, idx) =>
+                                idx === i ? { ...t, reward_label: e.target.value } : t
+                              ),
+                            }));
+                          }}
+                          placeholder="of beloning"
+                          className="flex-1 rounded-lg border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                         />
+                        {form.tiers.length > 1 && (
+                          <button
+                            onClick={() => removeTier(i)}
+                            className="rounded p-1 text-gray-400 hover:text-red-500"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
-                      <div className="relative flex-1">
-                        <span className="absolute left-3 top-2 text-xs text-gray-400">
-                          Bonus €
-                        </span>
-                        <input
-                          type="number"
-                          value={tier.bonus || ""}
-                          onChange={(e) =>
-                            updateTier(i, "bonus", e.target.value)
-                          }
-                          className="w-full rounded-lg border py-2 pl-16 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
-                      </div>
-                      {form.tiers.length > 1 && (
-                        <button
-                          onClick={() => removeTier(i)}
-                          className="rounded p-1 text-gray-400 hover:text-red-500"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      )}
                     </div>
                   ))}
                   <button
@@ -611,6 +651,7 @@ export function BonusConfigPanel() {
                   {config.type === "fixed" &&
                     config.bonus_value &&
                     ` • Bonus: ${formatCurrency(config.bonus_value)}`}
+                  {config.reward_label && ` • ${config.reward_label}`}
                   {config.type === "percentage" &&
                     config.percentage_value &&
                     ` • ${config.percentage_value}%`}

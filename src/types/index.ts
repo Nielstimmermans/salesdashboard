@@ -57,6 +57,7 @@ export interface BonusConfig {
   bonus_value: number | null;
   percentage_value: number | null;
   tiers: BonusTier[] | null;
+  reward_label: string | null;
   is_active: boolean;
   apply_to_all: boolean;
   created_at: string;
@@ -66,6 +67,7 @@ export interface BonusConfig {
 export interface BonusTier {
   threshold: number;
   bonus: number;
+  reward_label?: string;
 }
 
 export interface BonusAssignment {

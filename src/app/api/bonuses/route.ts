@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
     bonus_value,
     percentage_value,
     tiers,
+    reward_label,
     apply_to_all,
     employee_ids,
   } = body;
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
       percentage_value,
       tiers,
       scope: scope || "individual",
+      reward_label: reward_label || null,
       apply_to_all: apply_to_all || false,
     })
     .select()

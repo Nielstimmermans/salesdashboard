@@ -40,6 +40,7 @@ export async function PUT(
     "is_active",
     "apply_to_all",
     "scope",
+    "reward_label",
   ];
 
   for (const field of allowedFields) {

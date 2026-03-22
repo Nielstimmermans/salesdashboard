@@ -91,9 +91,15 @@ export function BonusProgressPanel() {
 
             {/* Bonus info */}
             <div className="mt-4 flex items-center justify-between rounded-lg bg-gray-50 p-3">
-              <span className="text-sm text-gray-600">Verdiende bonus:</span>
+              <span className="text-sm text-gray-600">Beloning:</span>
               <span className="text-lg font-bold text-green-600">
-                {formatCurrency(item.earnedBonus)}
+                {item.bonusConfig.reward_label && item.progressPercent >= 100
+                  ? item.bonusConfig.reward_label
+                  : item.bonusConfig.reward_label && item.progressPercent < 100
+                  ? `${item.bonusConfig.reward_label} (nog niet bereikt)`
+                  : formatCurrency(item.earnedBonus)}
+                {item.bonusConfig.reward_label && item.earnedBonus > 0 &&
+                  ` + ${formatCurrency(item.earnedBonus)}`}
               </span>
             </div>
 
@@ -101,8 +107,10 @@ export function BonusProgressPanel() {
             {item.nextTier && (
               <p className="mt-2 text-xs text-gray-500">
                 Nog {formatCurrency(item.nextTier.threshold - item.currentSales)}{" "}
-                nodig voor de volgende staffel (
-                {formatCurrency(item.nextTier.bonus)} bonus)
+                nodig voor de volgende staffel
+                {item.nextTier.reward_label
+                  ? ` (${item.nextTier.reward_label})`
+                  : ` (${formatCurrency(item.nextTier.bonus)} bonus)`}
               </p>
             )}
           </div>
