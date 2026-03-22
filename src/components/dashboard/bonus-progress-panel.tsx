@@ -9,9 +9,20 @@ export function BonusProgressPanel() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // TODO: Fetch from /api/bonuses/progress
-    setProgress([]);
-    setLoading(false);
+    async function fetchProgress() {
+      try {
+        const res = await fetch("/api/bonuses/progress");
+        if (res.ok) {
+          const data = await res.json();
+          setProgress(data.progress || []);
+        }
+      } catch {
+        console.error("Failed to fetch bonus progress");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchProgress();
   }, []);
 
   if (loading) {
