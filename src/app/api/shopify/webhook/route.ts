@@ -72,8 +72,6 @@ export async function POST(request: NextRequest) {
             .filter((t: string) => validTags.has(t))
         : [];
 
-      if (tags.length === 0) break;
-
       const totalPaid = parseFloat(payload.current_total_price || "0");
       const refundAmount = (payload.refunds || []).reduce(
         (sum: number, refund: any) =>
@@ -84,6 +82,23 @@ export async function POST(request: NextRequest) {
           ),
         0
       );
+
+      // Remove orders with tags that are no longer on the Shopify order
+      if (topic === "orders/updated") {
+        const { data: existingOrders } = await supabaseAdmin
+          .from("orders")
+          .select("id, tag")
+          .eq("store_id", store.id)
+          .eq("shopify_order_id", payload.id);
+
+        for (const existing of existingOrders || []) {
+          if (!tags.includes(existing.tag)) {
+            await supabaseAdmin.from("orders").delete().eq("id", existing.id);
+          }
+        }
+      }
+
+      if (tags.length === 0) break;
 
       for (const tag of tags) {
         await supabaseAdmin.from("orders").upsert(
