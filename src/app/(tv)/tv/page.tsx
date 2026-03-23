@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   DollarSign,
   ShoppingCart,
@@ -16,6 +16,8 @@ import {
   RefreshCw,
   FileText,
   Star,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type {
@@ -93,6 +95,30 @@ export default function TVDashboardPage() {
     averages: { today: number | null; todayCount: number; week: number | null; weekCount: number } | null;
   }>({ stats: null, reviews: [], averages: null });
   const [loading, setLoading] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const prevOrderCountRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize audio on first user click
+  const enableSound = () => {
+    if (!audioRef.current) {
+      audioRef.current = new Audio("/sounds/sale.mp3");
+      audioRef.current.volume = 0.8;
+    }
+    // Play + pause to unlock audio context
+    audioRef.current.play().then(() => {
+      audioRef.current!.pause();
+      audioRef.current!.currentTime = 0;
+      setSoundEnabled(true);
+    }).catch(() => {});
+  };
+
+  const playSaleSound = useCallback(() => {
+    if (audioRef.current && soundEnabled) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {});
+    }
+  }, [soundEnabled]);
 
   const fetchAll = useCallback(async () => {
     const params = new URLSearchParams({ period, storeId: "all" });
@@ -109,10 +135,12 @@ export default function TVDashboardPage() {
       ]);
 
       let teamSalesTotal = 0;
+      let newOrderCount = 0;
       if (salesRes.status === "fulfilled" && salesRes.value.ok) {
         const d = await salesRes.value.json();
         setSales(d.stats);
         teamSalesTotal = d.stats?.netRevenue || 0;
+        newOrderCount = d.stats?.totalOrders || 0;
       }
       if (lbRes.status === "fulfilled" && lbRes.value.ok) {
         const d = await lbRes.value.json();
@@ -174,13 +202,19 @@ export default function TVDashboardPage() {
         }
       }
 
+      // Check for new orders → play sound
+      if (prevOrderCountRef.current !== null && newOrderCount > prevOrderCountRef.current) {
+        playSaleSound();
+      }
+      prevOrderCountRef.current = newOrderCount;
+
       setLastRefresh(new Date());
     } catch (err) {
       console.error("TV fetch error:", err);
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, playSaleSound]);
 
   // Initial fetch + auto-refresh every 60s
   useEffect(() => {
@@ -216,7 +250,18 @@ export default function TVDashboardPage() {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-sm text-gray-400">
+        <div className="flex items-center gap-3 text-sm text-gray-400">
+          <button
+            onClick={enableSound}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              soundEnabled
+                ? "bg-green-900/50 text-green-400 border border-green-800"
+                : "bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700"
+            }`}
+          >
+            {soundEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+            {soundEnabled ? "Geluid aan" : "Geluid activeren"}
+          </button>
           <RefreshCw className="h-5 w-5" />
           {lastRefresh.toLocaleTimeString("nl-NL")}
         </div>
