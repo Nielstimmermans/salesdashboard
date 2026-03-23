@@ -184,7 +184,7 @@ export default function TVDashboardPage() {
     : 0;
 
   return (
-    <div className="flex h-screen flex-col gap-2 px-20 pt-10 pb-4">
+    <div className="flex h-screen flex-col gap-2 px-20 py-20">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
