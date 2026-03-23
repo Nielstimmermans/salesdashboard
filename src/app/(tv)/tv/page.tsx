@@ -15,6 +15,7 @@ import {
   Target,
   RefreshCw,
   FileText,
+  Star,
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type {
@@ -86,19 +87,24 @@ export default function TVDashboardPage() {
   const [viewCounts, setViewCounts] = useState<ViewTicketCount[]>([]);
   const [teamBonuses, setTeamBonuses] = useState<BonusProgress[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [trustpilot, setTrustpilot] = useState<{
+    stats: { trust_score: number; total_reviews: number } | null;
+    reviews: { review_id: string; author: string; rating: number; title: string; text: string; date: string }[];
+  }>({ stats: null, reviews: [] });
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     const params = new URLSearchParams({ period, storeId: "all" });
 
     try {
-      const [salesRes, lbRes, csRes, viewsRes, bonusRes, ordersRes] = await Promise.allSettled([
+      const [salesRes, lbRes, csRes, viewsRes, bonusRes, ordersRes, tpRes] = await Promise.allSettled([
         fetch(`/api/stats?${params}`),
         fetch(`/api/leaderboard?${params}`),
         fetch(`/api/cs/overview?${new URLSearchParams({ period, time_series: "false" })}`),
         fetch("/api/cs/views"),
         fetch("/api/bonuses"),
         fetch(`/api/orders?${params}&limit=10`),
+        fetch("/api/trustpilot"),
       ]);
 
       let teamSalesTotal = 0;
@@ -122,6 +128,10 @@ export default function TVDashboardPage() {
       if (ordersRes.status === "fulfilled" && ordersRes.value.ok) {
         const d = await ordersRes.value.json();
         setOrders(d.orders || []);
+      }
+      if (tpRes.status === "fulfilled" && tpRes.value.ok) {
+        const d = await tpRes.value.json();
+        setTrustpilot({ stats: d.stats, reviews: d.reviews || [] });
       }
       if (bonusRes.status === "fulfilled" && bonusRes.value.ok) {
         const d = await bonusRes.value.json();
@@ -364,9 +374,69 @@ export default function TVDashboardPage() {
           </div>
         </div>
 
-        {/* Team Bonuses — 3 cols */}
-        <div className="col-span-3 flex flex-col gap-3 overflow-hidden">
-          <div className="flex-1 rounded-lg border border-gray-800 bg-gray-900 p-3">
+        {/* Trustpilot + Team Bonuses — 3 cols */}
+        <div className="col-span-3 flex flex-col gap-2 overflow-hidden">
+          {/* Trustpilot */}
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Star className="h-4 w-4 text-green-400" />
+              <h3 className="text-sm font-semibold text-gray-300">Trustpilot</h3>
+            </div>
+            {trustpilot.stats ? (
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-green-400">
+                    {trustpilot.stats.trust_score}
+                  </span>
+                  <div className="flex">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Star
+                        key={s}
+                        className={`h-3.5 w-3.5 ${
+                          s <= Math.round(trustpilot.stats!.trust_score)
+                            ? "text-green-400 fill-green-400"
+                            : "text-gray-600"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    {trustpilot.stats.total_reviews.toLocaleString("nl-NL")} reviews
+                  </span>
+                </div>
+                {/* Latest reviews */}
+                {trustpilot.reviews.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    {trustpilot.reviews.slice(0, 3).map((r) => (
+                      <div key={r.review_id} className="rounded-md bg-gray-800 px-2 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex">
+                            {[1, 2, 3, 4, 5].map((s) => (
+                              <Star
+                                key={s}
+                                className={`h-2.5 w-2.5 ${
+                                  s <= r.rating ? "text-green-400 fill-green-400" : "text-gray-600"
+                                }`}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-[10px] text-gray-500">{r.author}</span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] font-medium text-gray-300 truncate">
+                          {r.title}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600">Geen data</p>
+            )}
+          </div>
+
+          {/* Team Bonuses */}
+          <div className="flex-1 rounded-lg border border-gray-800 bg-gray-900 p-3 overflow-hidden">
             <h3 className="mb-2 text-sm font-semibold text-gray-300">Team Bonussen</h3>
             {teamBonuses.length === 0 && !loading ? (
               <p className="text-center text-sm text-gray-600">Geen team bonussen</p>
