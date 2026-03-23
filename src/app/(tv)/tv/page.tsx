@@ -14,6 +14,7 @@ import {
   Inbox,
   Target,
   RefreshCw,
+  FileText,
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type {
@@ -22,6 +23,7 @@ import type {
   LeaderboardEntry,
   BonusConfig,
   BonusProgress,
+  Order,
 } from "@/types";
 import type { CSOverviewData } from "@/types/gorgias";
 import type { ViewTicketCount } from "@/lib/gorgias";
@@ -83,18 +85,20 @@ export default function TVDashboardPage() {
   const [csData, setCsData] = useState<CSOverviewData | null>(null);
   const [viewCounts, setViewCounts] = useState<ViewTicketCount[]>([]);
   const [teamBonuses, setTeamBonuses] = useState<BonusProgress[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     const params = new URLSearchParams({ period, storeId: "all" });
 
     try {
-      const [salesRes, lbRes, csRes, viewsRes, bonusRes] = await Promise.allSettled([
+      const [salesRes, lbRes, csRes, viewsRes, bonusRes, ordersRes] = await Promise.allSettled([
         fetch(`/api/stats?${params}`),
         fetch(`/api/leaderboard?${params}`),
         fetch(`/api/cs/overview?${new URLSearchParams({ period, time_series: "false" })}`),
         fetch("/api/cs/views"),
         fetch("/api/bonuses"),
+        fetch(`/api/orders?${params}&limit=10`),
       ]);
 
       let teamSalesTotal = 0;
@@ -114,6 +118,10 @@ export default function TVDashboardPage() {
       if (viewsRes.status === "fulfilled" && viewsRes.value.ok) {
         const d = await viewsRes.value.json();
         setViewCounts(d.viewCounts || []);
+      }
+      if (ordersRes.status === "fulfilled" && ordersRes.value.ok) {
+        const d = await ordersRes.value.json();
+        setOrders(d.orders || []);
       }
       if (bonusRes.status === "fulfilled" && bonusRes.value.ok) {
         const d = await bonusRes.value.json();
@@ -176,7 +184,7 @@ export default function TVDashboardPage() {
     : 0;
 
   return (
-    <div className="flex h-screen flex-col gap-3 p-4">
+    <div className="flex h-screen flex-col gap-2 px-10 py-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -223,18 +231,19 @@ export default function TVDashboardPage() {
 
       {/* Main content: Leaderboard + CS + Bonuses */}
       <div className="grid flex-1 grid-cols-12 gap-3 overflow-hidden">
-        {/* Leaderboard — 5 cols */}
-        <div className="col-span-5 flex flex-col gap-3 overflow-hidden">
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-3 flex-1 overflow-hidden">
-            <h3 className="mb-2 text-sm font-semibold text-gray-300">Leaderboard</h3>
+        {/* Leaderboard + Orders — 5 cols */}
+        <div className="col-span-5 flex flex-col gap-2 overflow-hidden">
+          {/* Leaderboard */}
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
+            <h3 className="mb-1.5 text-sm font-semibold text-gray-300">Leaderboard</h3>
             {leaderboard.length === 0 && !loading ? (
               <p className="text-center text-sm text-gray-600">Geen data</p>
             ) : (
-              <div className="space-y-1.5">
-                {leaderboard.slice(0, 8).map((entry, idx) => (
+              <div className="space-y-1">
+                {leaderboard.slice(0, 5).map((entry, idx) => (
                   <div
                     key={entry.tag}
-                    className={`flex items-center justify-between rounded-md px-3 py-1.5 ${
+                    className={`flex items-center justify-between rounded-md px-3 py-1 ${
                       idx < 3 ? "bg-gray-800" : ""
                     }`}
                   >
@@ -259,6 +268,54 @@ export default function TVDashboardPage() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* Recent Orders */}
+          <div className="flex-1 overflow-hidden rounded-lg border border-gray-800 bg-gray-900 p-3">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5 text-gray-400" />
+              <h3 className="text-sm font-semibold text-gray-300">Recente orders</h3>
+            </div>
+            {orders.length === 0 && !loading ? (
+              <p className="text-center text-sm text-gray-600">Geen orders</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-gray-500">
+                    <th className="pb-1 text-left font-medium">Order</th>
+                    <th className="pb-1 text-left font-medium">Medewerker</th>
+                    <th className="pb-1 text-right font-medium">Bedrag</th>
+                    <th className="pb-1 text-right font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.slice(0, 8).map((order) => (
+                    <tr key={order.id} className="border-t border-gray-800">
+                      <td className="py-1 text-gray-300">#{order.order_number}</td>
+                      <td className="py-1">
+                        <span className="rounded bg-blue-900/50 px-1.5 py-0.5 text-blue-300">
+                          {order.tag || "—"}
+                        </span>
+                      </td>
+                      <td className="py-1 text-right font-medium text-green-400">
+                        {formatCurrency(order.total_paid)}
+                      </td>
+                      <td className="py-1 text-right">
+                        <span className={`rounded px-1.5 py-0.5 ${
+                          order.financial_status === "paid"
+                            ? "bg-green-900/50 text-green-300"
+                            : order.financial_status === "refunded"
+                            ? "bg-red-900/50 text-red-300"
+                            : "bg-gray-800 text-gray-400"
+                        }`}>
+                          {order.financial_status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
