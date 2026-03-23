@@ -18,6 +18,7 @@ import {
   Star,
   Volume2,
   VolumeX,
+  Megaphone,
 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type {
@@ -323,12 +324,18 @@ export default function TVDashboardPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [saleQueue, setSaleQueue] = useState<SalePopupData[]>([]);
   const [activeSale, setActiveSale] = useState<SalePopupData | null>(null);
+  const motivateAudioRef = useRef<HTMLAudioElement | null>(null);
+  const motivatePlayedTodayRef = useRef<string | null>(null);
 
   // Initialize audio on first user click
   const enableSound = () => {
     if (!audioRef.current) {
       audioRef.current = new Audio("/sounds/sale.mp3");
       audioRef.current.volume = 0.8;
+    }
+    if (!motivateAudioRef.current) {
+      motivateAudioRef.current = new Audio("/sounds/motivate.mp3");
+      motivateAudioRef.current.volume = 1.0;
     }
     // Play + pause to unlock audio context
     audioRef.current.play().then(() => {
@@ -337,6 +344,29 @@ export default function TVDashboardPage() {
       setSoundEnabled(true);
     }).catch(() => {});
   };
+
+  const playMotivateSound = useCallback(() => {
+    if (motivateAudioRef.current && soundEnabled) {
+      motivateAudioRef.current.currentTime = 0;
+      motivateAudioRef.current.play().catch(() => {});
+    }
+  }, [soundEnabled]);
+
+  // Auto-play motivate sound at 9:15 every morning
+  useEffect(() => {
+    if (!soundEnabled) return;
+    const checkTime = () => {
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      if (now.getHours() === 9 && now.getMinutes() === 15 && motivatePlayedTodayRef.current !== today) {
+        motivatePlayedTodayRef.current = today;
+        playMotivateSound();
+      }
+    };
+    const interval = setInterval(checkTime, 30_000); // check every 30s
+    checkTime();
+    return () => clearInterval(interval);
+  }, [soundEnabled, playMotivateSound]);
 
   const playSaleSound = useCallback(() => {
     if (audioRef.current && soundEnabled) {
@@ -507,6 +537,15 @@ export default function TVDashboardPage() {
             {soundEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
             {soundEnabled ? "Geluid aan" : "Geluid activeren"}
           </button>
+          {soundEnabled && (
+            <button
+              onClick={playMotivateSound}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors bg-orange-900/50 text-orange-400 border border-orange-800 hover:bg-orange-800/50"
+            >
+              <Megaphone className="h-5 w-5" />
+              Motiveer Team
+            </button>
+          )}
           <RefreshCw className="h-5 w-5" />
           {lastRefresh.toLocaleTimeString("nl-NL")}
         </div>
