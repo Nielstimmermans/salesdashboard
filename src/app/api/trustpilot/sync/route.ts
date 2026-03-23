@@ -29,9 +29,9 @@ export async function GET(request: NextRequest) {
         queries: ["https://www.trustpilot.com/review/fatbikeskopen.nl"],
         input_file: null,
         enrich: false,
+        webhook: webhookUrl,
         settings: {
           output_extension: "json",
-          webhook: webhookUrl,
         },
         tags: [],
         enrichments: [],
