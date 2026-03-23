@@ -184,7 +184,7 @@ export default function TVDashboardPage() {
     : 0;
 
   return (
-    <div className="flex h-screen flex-col gap-2 px-10 py-4">
+    <div className="flex h-screen flex-col gap-2 px-20 py-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -205,8 +205,8 @@ export default function TVDashboardPage() {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <RefreshCw className="h-3 w-3" />
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <RefreshCw className="h-5 w-5" />
           {lastRefresh.toLocaleTimeString("nl-NL")}
         </div>
       </div>
