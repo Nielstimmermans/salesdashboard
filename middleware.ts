@@ -5,6 +5,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/api/shopify/webhook",
   "/api/trustpilot/webhook",
+  "/api/trustpilot/sync",
 ]);
 
 export default clerkMiddleware(async (auth, request) => {
