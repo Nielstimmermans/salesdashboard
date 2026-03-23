@@ -2,7 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 
-// Outscraper sends scraped Trustpilot data here when a job completes
+// Outscraper webhook payload fields (from actual test):
+// query, total_reviews, review_rating, review_title, review_text,
+// review_likes, review_timestamp, review_datetime_utc, review_id,
+// review_verified, author_title, author_id, author_image,
+// author_reviews_number, author_reviews_number_same_domain,
+// author_country_code, owner_answer, owner_answer_date
+
+interface OutscraperReview {
+  query: string;
+  total_reviews: number;
+  review_rating: number;
+  review_title: string;
+  review_text: string;
+  review_likes: number;
+  review_timestamp: number;
+  review_datetime_utc: string;
+  review_id: string;
+  review_verified: boolean;
+  author_title: string;
+  author_id: string;
+  author_image: string;
+  author_reviews_number: number;
+  author_reviews_number_same_domain: number;
+  author_country_code: string;
+  owner_answer: string | null;
+  owner_answer_date: string | null;
+}
+
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
@@ -25,86 +52,84 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (payload.status !== "Success" || !payload.data) {
-    // Job still pending or failed — acknowledge
-    return NextResponse.json({ ok: true, status: payload.status });
-  }
+  // Outscraper sends either:
+  // A) Webhook: { id, status, data: [[...reviews]] }
+  // B) Direct array: [...reviews]
+  let reviews: OutscraperReview[] = [];
 
-  // Outscraper data structure: data[query_group][result]
-  // Each result has reviews_data array
-  const reviews: Record<string, unknown>[] = [];
-  let businessInfo: Record<string, unknown> | null = null;
-
-  for (const group of payload.data) {
-    for (const result of group) {
-      // Capture business-level info
-      if (!businessInfo && result.name) {
-        businessInfo = {
-          name: result.name,
-          query: result.query,
-          trust_score: result.trust_score ?? result.rating ?? null,
-          total_reviews: result.reviews ?? result.total_reviews ?? null,
-        };
-      }
-
-      // Collect reviews
-      if (result.reviews_data) {
-        for (const review of result.reviews_data) {
-          reviews.push(review);
-        }
+  if (Array.isArray(payload)) {
+    // Direct array format
+    reviews = payload;
+  } else if (payload.data) {
+    // Webhook wrapper format: data[group][review]
+    for (const group of payload.data) {
+      if (Array.isArray(group)) {
+        reviews.push(...group);
       }
     }
   }
 
-  // Upsert business info
-  if (businessInfo) {
-    await supabaseAdmin.from("trustpilot_stats").upsert(
-      {
-        id: "main",
-        business_name: businessInfo.name,
-        query: businessInfo.query,
-        trust_score: businessInfo.trust_score,
-        total_reviews: businessInfo.total_reviews,
-        raw_data: businessInfo,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
+  if (reviews.length === 0) {
+    return NextResponse.json({ ok: true, message: "No reviews in payload" });
   }
 
-  // Insert reviews (upsert by outscraper review id or text hash)
-  if (reviews.length > 0) {
-    const rows = reviews.map((r) => ({
-      review_id:
-        String(r.review_id || r.id || "") ||
-        crypto
-          .createHash("md5")
-          .update(String(r.review_text || r.text || ""))
-          .digest("hex"),
-      author: String(r.author_title || r.author || r.reviewer_name || ""),
-      rating: Number(r.review_rating || r.rating || 0),
-      title: String(r.review_title || r.title || ""),
-      text: String(r.review_text || r.text || ""),
-      date: String(r.review_datetime_utc || r.date || r.published_date || ""),
-      country: String(r.author_country || r.country || ""),
-      verified: Boolean(r.is_verified || r.verified || false),
-      reply: String(r.owner_answer || r.reply || ""),
-      raw_data: r,
-      created_at: new Date().toISOString(),
-    }));
+  // Extract business stats from first review
+  const first = reviews[0];
+  const totalReviews = first.total_reviews;
+  const query = first.query;
 
-    await supabaseAdmin
-      .from("trustpilot_reviews")
-      .upsert(rows, { onConflict: "review_id" });
+  // Calculate average rating from received reviews
+  const avgRating =
+    reviews.reduce((sum, r) => sum + r.review_rating, 0) / reviews.length;
+
+  // Calculate star distribution
+  const stars: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const r of reviews) {
+    if (r.review_rating >= 1 && r.review_rating <= 5) {
+      stars[r.review_rating]++;
+    }
   }
+
+  // Upsert business stats
+  await supabaseAdmin.from("trustpilot_stats").upsert(
+    {
+      id: "main",
+      business_name: "Fatbikeskopen.nl",
+      query,
+      total_reviews: totalReviews,
+      trust_score: Math.round(avgRating * 10) / 10,
+      raw_data: { stars, avg_rating: avgRating, reviews_scraped: reviews.length },
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" }
+  );
+
+  // Upsert reviews
+  const rows = reviews.map((r) => ({
+    review_id: r.review_id,
+    author: r.author_title,
+    rating: r.review_rating,
+    title: r.review_title,
+    text: r.review_text,
+    date: r.review_datetime_utc,
+    country: r.author_country_code,
+    verified: r.review_verified,
+    reply: r.owner_answer || "",
+    raw_data: r,
+    created_at: new Date().toISOString(),
+  }));
+
+  await supabaseAdmin
+    .from("trustpilot_reviews")
+    .upsert(rows, { onConflict: "review_id" });
 
   console.log(
-    `[Trustpilot webhook] Received ${reviews.length} reviews, business: ${businessInfo?.name}`
+    `[Trustpilot webhook] Received ${reviews.length} reviews, total: ${totalReviews}`
   );
 
   return NextResponse.json({
     ok: true,
     reviewsReceived: reviews.length,
-    business: businessInfo?.name,
+    totalReviews,
   });
 }
