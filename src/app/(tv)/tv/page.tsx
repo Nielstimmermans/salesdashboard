@@ -31,6 +31,229 @@ import type {
 import type { CSOverviewData } from "@/types/gorgias";
 import type { ViewTicketCount } from "@/lib/gorgias";
 
+// ── Sale Popup Component ─────────────────────────────────
+
+interface SalePopupData {
+  amount: number;
+  tag: string;
+  orderNumber: string;
+}
+
+function SalePopup({ sale, onDone }: { sale: SalePopupData; onDone: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onDone, 30000);
+    return () => clearTimeout(timer);
+  }, [onDone]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      onClick={onDone}
+      style={{ cursor: "pointer" }}
+    >
+      {/* Background overlay with radial glow */}
+      <div className="absolute inset-0 sale-popup-bg" />
+
+      {/* Rays */}
+      <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
+        <div className="sale-rays" />
+      </div>
+
+      {/* Particles */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        {Array.from({ length: 20 }).map((_, i) => (
+          <div
+            key={i}
+            className="sale-particle"
+            style={{
+              left: `${Math.random() * 100}%`,
+              animationDelay: `${Math.random() * 2}s`,
+              animationDuration: `${2 + Math.random() * 2}s`,
+              backgroundColor: ["#FFD700", "#FF6B35", "#00E676", "#FF4081", "#40C4FF", "#FFEB3B"][i % 6],
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 flex flex-col items-center sale-popup-content">
+        {/* Diamond shape behind text */}
+        <div className="sale-diamond" />
+
+        {/* SALE text */}
+        <div className="sale-title">
+          💰 SALE!
+        </div>
+
+        {/* Amount */}
+        <div className="sale-amount">
+          {formatCurrency(sale.amount)}
+        </div>
+
+        {/* Tag / Employee */}
+        <div className="sale-tag">
+          {sale.tag}
+        </div>
+
+        {/* Order number */}
+        <div className="mt-2 text-sm text-gray-400 sale-fade-in">
+          #{sale.orderNumber}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .sale-popup-bg {
+          background: radial-gradient(ellipse at center, rgba(255, 180, 0, 0.3) 0%, rgba(0, 0, 0, 0.95) 70%);
+          animation: bgPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes bgPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.85; }
+        }
+
+        .sale-rays {
+          width: 200vmax;
+          height: 200vmax;
+          background: conic-gradient(
+            from 0deg,
+            transparent 0deg, rgba(255, 200, 0, 0.08) 5deg, transparent 10deg,
+            transparent 20deg, rgba(255, 200, 0, 0.08) 25deg, transparent 30deg,
+            transparent 40deg, rgba(255, 200, 0, 0.08) 45deg, transparent 50deg,
+            transparent 60deg, rgba(255, 200, 0, 0.08) 65deg, transparent 70deg,
+            transparent 80deg, rgba(255, 200, 0, 0.08) 85deg, transparent 90deg,
+            transparent 100deg, rgba(255, 200, 0, 0.08) 105deg, transparent 110deg,
+            transparent 120deg, rgba(255, 200, 0, 0.08) 125deg, transparent 130deg,
+            transparent 140deg, rgba(255, 200, 0, 0.08) 145deg, transparent 150deg,
+            transparent 160deg, rgba(255, 200, 0, 0.08) 165deg, transparent 170deg,
+            transparent 180deg, rgba(255, 200, 0, 0.08) 185deg, transparent 190deg,
+            transparent 200deg, rgba(255, 200, 0, 0.08) 205deg, transparent 210deg,
+            transparent 220deg, rgba(255, 200, 0, 0.08) 225deg, transparent 230deg,
+            transparent 240deg, rgba(255, 200, 0, 0.08) 245deg, transparent 250deg,
+            transparent 260deg, rgba(255, 200, 0, 0.08) 265deg, transparent 270deg,
+            transparent 280deg, rgba(255, 200, 0, 0.08) 285deg, transparent 290deg,
+            transparent 300deg, rgba(255, 200, 0, 0.08) 305deg, transparent 310deg,
+            transparent 320deg, rgba(255, 200, 0, 0.08) 325deg, transparent 330deg,
+            transparent 340deg, rgba(255, 200, 0, 0.08) 345deg, transparent 350deg
+          );
+          animation: raysSpin 20s linear infinite;
+        }
+
+        @keyframes raysSpin {
+          to { transform: rotate(360deg); }
+        }
+
+        .sale-popup-content {
+          animation: contentEntry 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        @keyframes contentEntry {
+          0% { transform: scale(0.3); opacity: 0; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+
+        .sale-diamond {
+          position: absolute;
+          width: 350px;
+          height: 350px;
+          background: linear-gradient(135deg, rgba(255, 180, 0, 0.15), rgba(255, 80, 0, 0.1));
+          border: 2px solid rgba(255, 200, 0, 0.3);
+          transform: rotate(45deg);
+          top: -60px;
+          border-radius: 24px;
+          animation: diamondPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes diamondPulse {
+          0%, 100% { box-shadow: 0 0 40px rgba(255, 180, 0, 0.2), 0 0 80px rgba(255, 180, 0, 0.1); }
+          50% { box-shadow: 0 0 60px rgba(255, 180, 0, 0.4), 0 0 120px rgba(255, 180, 0, 0.2); }
+        }
+
+        .sale-title {
+          font-size: 3rem;
+          font-weight: 900;
+          background: linear-gradient(to bottom, #FFD700, #FF8C00);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          filter: drop-shadow(0 0 20px rgba(255, 200, 0, 0.5));
+          animation: titleBounce 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+          position: relative;
+          z-index: 1;
+          letter-spacing: 4px;
+        }
+
+        @keyframes titleBounce {
+          0% { transform: scale(0) translateY(30px); opacity: 0; }
+          60% { transform: scale(1.2) translateY(-5px); }
+          100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+
+        .sale-amount {
+          font-size: 5rem;
+          font-weight: 900;
+          color: white;
+          text-shadow: 0 0 30px rgba(255, 255, 255, 0.5), 0 0 60px rgba(255, 200, 0, 0.3);
+          animation: amountEntry 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+          position: relative;
+          z-index: 1;
+          line-height: 1.1;
+        }
+
+        @keyframes amountEntry {
+          0% { transform: scale(0) translateY(20px); opacity: 0; }
+          100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+
+        .sale-tag {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: #40C4FF;
+          text-shadow: 0 0 20px rgba(64, 196, 255, 0.5);
+          animation: tagEntry 0.6s ease-out 0.4s both;
+          position: relative;
+          z-index: 1;
+          margin-top: 8px;
+          padding: 4px 24px;
+          border: 1px solid rgba(64, 196, 255, 0.3);
+          border-radius: 9999px;
+          background: rgba(64, 196, 255, 0.1);
+        }
+
+        @keyframes tagEntry {
+          0% { transform: translateY(20px); opacity: 0; }
+          100% { transform: translateY(0); opacity: 1; }
+        }
+
+        .sale-fade-in {
+          animation: fadeIn 0.5s ease-out 0.6s both;
+          position: relative;
+          z-index: 1;
+        }
+
+        @keyframes fadeIn {
+          0% { opacity: 0; }
+          100% { opacity: 1; }
+        }
+
+        .sale-particle {
+          position: absolute;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          top: -10px;
+          animation: particleFall linear forwards;
+        }
+
+        @keyframes particleFall {
+          0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // ── Helpers ──────────────────────────────────────────────
 
 function formatDuration(seconds: number): string {
@@ -96,8 +319,10 @@ export default function TVDashboardPage() {
   }>({ stats: null, reviews: [], averages: null });
   const [loading, setLoading] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const prevOrderCountRef = useRef<number | null>(null);
+  const prevOrderIdsRef = useRef<Set<string> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [saleQueue, setSaleQueue] = useState<SalePopupData[]>([]);
+  const [activeSale, setActiveSale] = useState<SalePopupData | null>(null);
 
   // Initialize audio on first user click
   const enableSound = () => {
@@ -120,6 +345,14 @@ export default function TVDashboardPage() {
     }
   }, [soundEnabled]);
 
+  // Process sale queue: show next popup when current one finishes
+  useEffect(() => {
+    if (!activeSale && saleQueue.length > 0) {
+      setActiveSale(saleQueue[0]);
+      setSaleQueue((q) => q.slice(1));
+    }
+  }, [activeSale, saleQueue]);
+
   const fetchAll = useCallback(async () => {
     const params = new URLSearchParams({ period, storeId: "all" });
 
@@ -135,12 +368,10 @@ export default function TVDashboardPage() {
       ]);
 
       let teamSalesTotal = 0;
-      let newOrderCount = 0;
       if (salesRes.status === "fulfilled" && salesRes.value.ok) {
         const d = await salesRes.value.json();
         setSales(d.stats);
         teamSalesTotal = d.stats?.netRevenue || 0;
-        newOrderCount = d.stats?.totalOrders || 0;
       }
       if (lbRes.status === "fulfilled" && lbRes.value.ok) {
         const d = await lbRes.value.json();
@@ -154,9 +385,11 @@ export default function TVDashboardPage() {
         const d = await viewsRes.value.json();
         setViewCounts(d.viewCounts || []);
       }
+      let freshOrders: Order[] = [];
       if (ordersRes.status === "fulfilled" && ordersRes.value.ok) {
         const d = await ordersRes.value.json();
-        setOrders(d.orders || []);
+        freshOrders = d.orders || [];
+        setOrders(freshOrders);
       }
       if (tpRes.status === "fulfilled" && tpRes.value.ok) {
         const d = await tpRes.value.json();
@@ -164,11 +397,9 @@ export default function TVDashboardPage() {
       }
       if (bonusRes.status === "fulfilled" && bonusRes.value.ok) {
         const d = await bonusRes.value.json();
-        // Filter team bonuses that are active
         const configs: BonusConfig[] = (d.configs || []).filter(
           (c: BonusConfig) => c.is_active && c.scope === "group"
         );
-        // Build progress for team bonuses
         if (configs.length > 0) {
           const teamSales = teamSalesTotal;
           const progress: BonusProgress[] = configs.map((config) => {
@@ -202,11 +433,21 @@ export default function TVDashboardPage() {
         }
       }
 
-      // Check for new orders → play sound
-      if (prevOrderCountRef.current !== null && newOrderCount > prevOrderCountRef.current) {
-        playSaleSound();
+      // Detect new orders → show popup + play sound
+      const freshIds = new Set(freshOrders.map((o) => o.id));
+      if (prevOrderIdsRef.current !== null && freshOrders.length > 0) {
+        const newOrders = freshOrders.filter((o) => !prevOrderIdsRef.current!.has(o.id));
+        if (newOrders.length > 0) {
+          playSaleSound();
+          const newSales: SalePopupData[] = newOrders.map((o) => ({
+            amount: o.total_paid,
+            tag: o.tag || "Onbekend",
+            orderNumber: o.order_number,
+          }));
+          setSaleQueue((q) => [...q, ...newSales]);
+        }
       }
-      prevOrderCountRef.current = newOrderCount;
+      prevOrderIdsRef.current = freshIds;
 
       setLastRefresh(new Date());
     } catch (err) {
@@ -230,6 +471,10 @@ export default function TVDashboardPage() {
 
   return (
     <div className="flex h-screen flex-col gap-2 px-20 py-20">
+      {/* Sale Popup Overlay */}
+      {activeSale && (
+        <SalePopup sale={activeSale} onDone={() => setActiveSale(null)} />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
