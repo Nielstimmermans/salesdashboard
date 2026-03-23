@@ -90,7 +90,8 @@ export default function TVDashboardPage() {
   const [trustpilot, setTrustpilot] = useState<{
     stats: { trust_score: number; total_reviews: number } | null;
     reviews: { review_id: string; author: string; rating: number; title: string; text: string; date: string }[];
-  }>({ stats: null, reviews: [] });
+    averages: { today: number | null; todayCount: number; week: number | null; weekCount: number } | null;
+  }>({ stats: null, reviews: [], averages: null });
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
@@ -131,7 +132,7 @@ export default function TVDashboardPage() {
       }
       if (tpRes.status === "fulfilled" && tpRes.value.ok) {
         const d = await tpRes.value.json();
-        setTrustpilot({ stats: d.stats, reviews: d.reviews || [] });
+        setTrustpilot({ stats: d.stats, reviews: d.reviews || [], averages: d.averages || null });
       }
       if (bonusRes.status === "fulfilled" && bonusRes.value.ok) {
         const d = await bonusRes.value.json();
@@ -404,6 +405,33 @@ export default function TVDashboardPage() {
                     {trustpilot.stats.total_reviews.toLocaleString("nl-NL")} reviews
                   </span>
                 </div>
+                {/* Period averages */}
+                {trustpilot.averages && (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="rounded-md bg-gray-800 px-2 py-1.5">
+                      <p className="text-[10px] text-gray-500">Vandaag</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-sm font-bold">
+                          {trustpilot.averages.today !== null ? trustpilot.averages.today : "—"}
+                        </span>
+                        <span className="text-[10px] text-gray-500">
+                          ({trustpilot.averages.todayCount} reviews)
+                        </span>
+                      </div>
+                    </div>
+                    <div className="rounded-md bg-gray-800 px-2 py-1.5">
+                      <p className="text-[10px] text-gray-500">Deze week</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-sm font-bold">
+                          {trustpilot.averages.week !== null ? trustpilot.averages.week : "—"}
+                        </span>
+                        <span className="text-[10px] text-gray-500">
+                          ({trustpilot.averages.weekCount} reviews)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Latest reviews */}
                 {trustpilot.reviews.length > 0 && (
                   <div className="mt-2 space-y-1.5">
