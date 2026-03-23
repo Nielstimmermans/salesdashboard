@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Use synchronous GET endpoint — waits for results
+    // Step 1: Create task
     const params = new URLSearchParams({
       query: "https://www.trustpilot.com/review/fatbikeskopen.nl",
       limit: "10",
@@ -30,31 +30,46 @@ export async function GET(request: NextRequest) {
 
     if (!res.ok) {
       const text = await res.text();
-      console.error("[Trustpilot sync] Outscraper error:", res.status, text);
-      return NextResponse.json({ error: `Outscraper error: ${res.status}` }, { status: 502 });
+      return NextResponse.json({ error: `Outscraper error: ${res.status}`, detail: text }, { status: 502 });
     }
 
-    const data = await res.json();
-    console.log("[Trustpilot sync] Response:", JSON.stringify(data).slice(0, 500));
+    const taskData = await res.json();
 
-    // Outscraper returns { data: [[...reviews]] } or just [[...reviews]]
+    // Step 2: Poll for results (Outscraper returns Pending, need to poll results_location)
+    const resultsUrl = taskData.results_location;
+    if (!resultsUrl) {
+      return NextResponse.json({ error: "No results_location", raw: taskData }, { status: 502 });
+    }
+
     let reviews: Record<string, unknown>[] = [];
-    if (data.data) {
-      for (const group of data.data) {
-        if (Array.isArray(group)) reviews.push(...group);
+    const maxAttempts = 12; // 12 * 10s = 2 min max wait
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((r) => setTimeout(r, 10_000)); // Wait 10s
+
+      const pollRes = await fetch(resultsUrl, {
+        headers: { "X-API-KEY": apiKey },
+      });
+
+      if (!pollRes.ok) continue;
+
+      const pollData = await pollRes.json();
+
+      if (pollData.status === "Success" && pollData.data) {
+        for (const group of pollData.data) {
+          if (Array.isArray(group)) reviews.push(...group);
+        }
+        break;
       }
-    } else if (Array.isArray(data)) {
-      for (const group of data) {
-        if (Array.isArray(group)) reviews.push(...group);
-        else if (typeof group === "object") reviews.push(group);
-      }
+
+      if (pollData.status !== "Pending") break;
     }
 
     if (reviews.length === 0) {
-      return NextResponse.json({ ok: true, message: "No reviews returned", raw: data });
+      return NextResponse.json({ ok: false, message: "No reviews after polling" });
     }
 
-    // Store stats
+    // Step 3: Store in Supabase
     const first = reviews[0] as Record<string, number | string>;
     await supabaseAdmin.from("trustpilot_stats").upsert(
       {
@@ -62,14 +77,13 @@ export async function GET(request: NextRequest) {
         business_name: "Fatbikeskopen.nl",
         query: first.query,
         total_reviews: first.total_reviews,
-        trust_score: 3.8, // From Trustpilot page
+        trust_score: 3.8,
         raw_data: { reviews_scraped: reviews.length },
         updated_at: new Date().toISOString(),
       },
       { onConflict: "id" }
     );
 
-    // Store reviews
     const rows = reviews.map((r) => ({
       review_id:
         String(r.review_id || "") ||
