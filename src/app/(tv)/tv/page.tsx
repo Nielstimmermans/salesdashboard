@@ -405,30 +405,29 @@ export default function TVDashboardPage() {
                     {trustpilot.stats.total_reviews.toLocaleString("nl-NL")} reviews
                   </span>
                 </div>
-                {/* Period averages */}
+                {/* Week average */}
                 {trustpilot.averages && (
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <div className="rounded-md bg-gray-800 px-2 py-1.5">
-                      <p className="text-[10px] text-gray-500">Vandaag</p>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-sm font-bold">
-                          {trustpilot.averages.today !== null ? trustpilot.averages.today : "—"}
-                        </span>
-                        <span className="text-[10px] text-gray-500">
-                          ({trustpilot.averages.todayCount} reviews)
-                        </span>
+                  <div className="mt-2 rounded-md bg-gray-800 px-2 py-1.5">
+                    <p className="text-[10px] text-gray-500">Deze week</p>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm font-bold">
+                        {trustpilot.averages.week !== null ? trustpilot.averages.week : "—"}
+                      </span>
+                      <div className="flex">
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <Star
+                            key={s}
+                            className={`h-2.5 w-2.5 ${
+                              trustpilot.averages!.week !== null && s <= Math.round(trustpilot.averages!.week)
+                                ? "text-green-400 fill-green-400"
+                                : "text-gray-600"
+                            }`}
+                          />
+                        ))}
                       </div>
-                    </div>
-                    <div className="rounded-md bg-gray-800 px-2 py-1.5">
-                      <p className="text-[10px] text-gray-500">Deze week</p>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-sm font-bold">
-                          {trustpilot.averages.week !== null ? trustpilot.averages.week : "—"}
-                        </span>
-                        <span className="text-[10px] text-gray-500">
-                          ({trustpilot.averages.weekCount} reviews)
-                        </span>
-                      </div>
+                      <span className="text-[10px] text-gray-500">
+                        ({trustpilot.averages.weekCount} reviews)
+                      </span>
                     </div>
                   </div>
                 )}
