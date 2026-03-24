@@ -431,8 +431,37 @@ export default function TVDashboardPage() {
           (c: BonusConfig) => c.is_active && c.scope === "group"
         );
         if (configs.length > 0) {
-          const teamSales = teamSalesTotal;
+          // Fetch sales for each unique bonus period (weekly, monthly, all_time)
+          const bonusPeriods = Array.from(new Set(configs.map((c) => c.period)));
+          const periodSalesMap: Record<string, number> = {};
+          // Reuse already-fetched data if period matches
+          const periodToApiPeriod: Record<string, string> = {
+            weekly: "week",
+            monthly: "month",
+            all_time: "year",
+          };
+          await Promise.all(
+            bonusPeriods.map(async (bp) => {
+              const apiPeriod = periodToApiPeriod[bp] || "month";
+              if (apiPeriod === period) {
+                // Already fetched above
+                periodSalesMap[bp] = teamSalesTotal;
+              } else {
+                try {
+                  const res = await fetch(`/api/stats?${new URLSearchParams({ period: apiPeriod, storeId: "all" })}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    periodSalesMap[bp] = data.stats?.netRevenue || 0;
+                  }
+                } catch {
+                  periodSalesMap[bp] = 0;
+                }
+              }
+            })
+          );
+
           const progress: BonusProgress[] = configs.map((config) => {
+            const teamSales = periodSalesMap[config.period] ?? teamSalesTotal;
             const target = config.target_amount || 0;
             const progressPct = target > 0 ? (teamSales / target) * 100 : 0;
             let earned = 0;
