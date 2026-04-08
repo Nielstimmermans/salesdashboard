@@ -3,17 +3,47 @@ import { twMerge } from "tailwind-merge";
 import {
   startOfDay,
   endOfDay,
-  startOfWeek,
-  endOfWeek,
   startOfMonth,
   endOfMonth,
   startOfYear,
   endOfYear,
-  subWeeks,
-  subMonths,
 } from "date-fns";
-import { nl } from "date-fns/locale";
 import type { PeriodFilter, DateRange } from "@/types";
+
+/**
+ * Business week boundary: Friday 17:00 → next Friday 17:00.
+ * Returns the most recent Friday 17:00 at or before `date`.
+ */
+export function startOfBusinessWeek(date: Date): Date {
+  const d = new Date(date);
+  const candidate = new Date(d);
+  candidate.setHours(17, 0, 0, 0);
+  // Shift to Friday of the current week (getDay: 0=Sun..5=Fri..6=Sat)
+  const diffToFri = candidate.getDay() - 5;
+  candidate.setDate(candidate.getDate() - diffToFri);
+  if (candidate.getTime() > d.getTime()) {
+    candidate.setDate(candidate.getDate() - 7);
+  }
+  return candidate;
+}
+
+export function endOfBusinessWeek(date: Date): Date {
+  const start = startOfBusinessWeek(date);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  end.setMilliseconds(end.getMilliseconds() - 1);
+  return end;
+}
+
+/**
+ * Returns 1..7 indicating which day of the business week `date` falls in
+ * (1 = first day after Friday 17:00, 7 = the day ending Friday 17:00).
+ */
+export function businessWeekDayIndex(date: Date): number {
+  const start = startOfBusinessWeek(date);
+  const diffMs = date.getTime() - start.getTime();
+  return Math.min(7, Math.floor(diffMs / (24 * 60 * 60 * 1000)) + 1);
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -58,8 +88,8 @@ export function getDateRange(period: PeriodFilter, customRange?: DateRange): Dat
       return { from: startOfDay(now), to: endOfDay(now) };
     case "week":
       return {
-        from: startOfWeek(now, { locale: nl, weekStartsOn: 1 }),
-        to: endOfWeek(now, { locale: nl, weekStartsOn: 1 }),
+        from: startOfBusinessWeek(now),
+        to: endOfBusinessWeek(now),
       };
     case "month":
       return { from: startOfMonth(now), to: endOfMonth(now) };

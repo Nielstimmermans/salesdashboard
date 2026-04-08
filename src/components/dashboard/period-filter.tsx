@@ -1,6 +1,7 @@
 "use client";
 
 import type { PeriodFilter as PeriodFilterType, DateRange } from "@/types";
+import { businessWeekDayIndex } from "@/lib/utils";
 
 interface PeriodFilterProps {
   value: PeriodFilterType;
@@ -23,9 +24,19 @@ export function PeriodFilter({
   dateRange,
   onDateRangeChange,
 }: PeriodFilterProps) {
+  const now = new Date();
+  const dayIdx = businessWeekDayIndex(now);
+  const dayName = now.toLocaleDateString("nl-NL", { weekday: "long" });
+
   return (
     <div className="flex items-center gap-2">
       <span className="text-sm font-medium text-gray-500">Periode:</span>
+      <span
+        className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
+        title="Werkweek loopt van vrijdag 17:00 t/m vrijdag 17:00"
+      >
+        Dag {dayIdx}/7 · {dayName}
+      </span>
       <div className="flex rounded-lg border bg-white p-1">
         {periods.map((period) => (
           <button

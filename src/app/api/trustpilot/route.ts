@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { startOfBusinessWeek } from "@/lib/utils";
 
 // GET: Fetch stored Trustpilot stats + recent reviews + period averages
 export async function GET() {
@@ -12,9 +13,7 @@ export async function GET() {
   // Date boundaries
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1)); // Monday
-  weekStart.setHours(0, 0, 0, 0);
+  const weekStart = startOfBusinessWeek(now); // Friday 17:00 boundary
   const weekStartISO = weekStart.toISOString();
 
   // Outscraper date format: "MM/DD/YYYY HH:MM:SS"
